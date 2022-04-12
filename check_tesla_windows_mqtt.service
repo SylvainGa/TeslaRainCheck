@@ -1,0 +1,11 @@
+[Unit]
+Description=Close the car windows if it rains
+After=multi-user.target[Service]
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/bin/python3 /home/pi/tesla/check_tesla_windows_mqtt.py
+
+[Install]
+WantedBy=multi-user.target
