@@ -1,6 +1,6 @@
 [Unit]
 Description=Close the car windows if it rains
-After=multi-user.target[Service]
+After=multi-user.target
 
 [Service]
 Type=simple
