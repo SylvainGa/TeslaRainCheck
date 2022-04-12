@@ -1,12 +1,43 @@
 #!/usr/bin/env python3
 
+import sys
+sys.path.insert(0, '/home/pi/tesla/TeslaPy')
+
 import teslapy
 import paho.mqtt.client as mqtt
 import json
 import time
 from datetime import datetime
+import smtplib
+
+class Emailer:
+    def sendmail(self, recipient, subject, content):
+        SMTP_SERVER = 'smtp.gmail.com' #Email Server (don't change!)
+        SMTP_PORT = 587 #Server Port (don't change!)
+        GMAIL_USERNAME = 'username@gmail.com' #change this to match your gmail account used to send the email from
+        GMAIL_PASSWORD = 'password' #change this to match your gmail password. Support Google App passord
+
+        #Create Headers
+        headers = ["From: " + GMAIL_USERNAME, "Subject: " + subject, "To: " + recipient, "MIME-Version: 1.0", "Content-Type: text/html"]
+        headers = "\r\n".join(headers)
+
+        #Connect to Gmail Server
+        session = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        session.ehlo()
+        session.starttls()
+        session.ehlo()
+
+        #Login to Gmail
+        session.login(GMAIL_USERNAME, GMAIL_PASSWORD)
+
+        #Send Email & Exit
+        session.sendmail(GMAIL_USERNAME, recipient, headers + "\r\n\r\n" + content)
+        session.quit
+
+sendTo = 'username@gmail.com' # Email account receiving the emails
 
 raining = False
+first_run = True
 
 # The callback for when the client receives a CONNACK response from the server.
 def on_connect(client, userdata, flags, rc):
@@ -26,6 +57,15 @@ def on_message(client, userdata, msg):
         current_time = now.strftime("%H:%M:%S")
         print(current_time + ": " + rain_cm)
 
+        if first_run == True:
+#            first_run = false
+            print("Sending first run email")
+
+            sender = Emailer()
+            emailSubject = "Tesla WeeWX - Got our first set of data of " + rain_cm + "cm at " + current_time
+            emailContent = "Tesla WeeWX - Got our first set of data of " + rain_cm + "cm at " + current_time
+            sender.sendmail(sendTo, emailSubject, emailContent)
+        
         rain = float(rain_cm)
         if rain > 0.0:
             if raining == False:
@@ -33,6 +73,11 @@ def on_message(client, userdata, msg):
                 print("Reading car")
                 tesla = teslapy.Tesla('username@example.com')
                 if not tesla.authorized:
+                    sender = Emailer()
+                    emailSubject = "Tesla WeeWX -  Require a new token at " + current_time
+                    emailContent = "Tesla WeeWX -  My token is currently '" + tesla.refresh_token + "'"
+                    sender.sendmail(sendTo, emailSubject, emailContent)
+
                     tesla.refresh_token(refresh_token=input('Enter SSO refresh token: '))
                 vehicles = tesla.vehicle_list()
                 vehicles[0].sync_wake_up()  # We need to get up to date data so no choice but to wake it
@@ -71,6 +116,7 @@ client = mqtt.Client()
 client.on_connect = on_connect
 client.on_message = on_message
 
+#client.tls_set()   # Uncomment if your mqtt installation uses TLS (without TLS, username and password are sent in clear text over your network
 client.username_pw_set(username="username", password="password")
 
 print("Connecting...")
