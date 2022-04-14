@@ -61,8 +61,6 @@ def on_message(client, userdata, msg):
 
     now = datetime.now()
     if now >= next_run:  # We do a run after 5 minutes
-        next_run = now + timedelta(minutes = 5)
-
         #print("Debug: Times up, querying the car")
 
         # Connect to our car (at least once) to get the status of the windows
@@ -91,6 +89,8 @@ def on_message(client, userdata, msg):
                 vehicles[vehicle].sync_wake_up()  # We need to get up to date data so no choice but to wake it
         #print("Debug: available is " + str(vehicles[vehicle].available()))
         if vehicles[vehicle].available() == True: # Only read if the car isn't asleep
+            next_run = now + timedelta(minutes = 1)	# Check every minute when the car is awake to reduce the chance of missing a window opening
+
             vehicleData = vehicles[vehicle].get_vehicle_data()
             moving = vehicleData['drive_state']['shift_state']
             fd_window = int(vehicleData['vehicle_state']['fd_window'])
@@ -101,6 +101,8 @@ def on_message(client, userdata, msg):
             
             print("Tesla: Number of windows open: " + str(windows) + " Moving is " + str(moving))
         else:
+            next_run = now + timedelta(minutes = 5)	# We're asleep so check back in 5 minutes
+
             print("Tesla: Vehicle is sleeping, shhh")
     # Read how much rain as fallen
     if rain_cm is not None:
