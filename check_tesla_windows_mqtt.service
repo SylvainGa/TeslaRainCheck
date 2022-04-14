@@ -5,7 +5,11 @@ After=multi-user.target
 [Service]
 Type=simple
 Restart=always
-ExecStart=/usr/bin/python3 /home/pi/tesla/check_tesla_windows_mqtt.py
+ExecStart=/usr/bin/python3 -u /home/pi/tesla/check_tesla_windows_mqtt.py
+WorkingDirectory=/home/pi/tesla
+
+StandardOutput=journal+console
+StandardError=journal+console
 
 [Install]
 WantedBy=multi-user.target
