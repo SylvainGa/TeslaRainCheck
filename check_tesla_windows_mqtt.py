@@ -91,16 +91,31 @@ def on_message(client, userdata, msg):
                 vehicles[vehicle].sync_wake_up()  # We need to get up to date data so no choice but to wake it
         #print("Debug: available is " + str(vehicles[vehicle].available()))
         if vehicles[vehicle].available() == True: # Only read if the car isn't asleep
-            next_run = now + timedelta(minutes = 1)	# Check every minute when the car is awake to reduce the chance of missing a window opening
-
             vehicleData = vehicles[vehicle].get_vehicle_data()
-            moving = vehicleData['drive_state']['shift_state']
             fd_window = int(vehicleData['vehicle_state']['fd_window'])
             fp_window = int(vehicleData['vehicle_state']['fp_window'])
             rd_window = int(vehicleData['vehicle_state']['rd_window'])
             rp_window = int(vehicleData['vehicle_state']['rp_window'])
             windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
-            
+
+            moving = vehicleData['drive_state']['shift_state']
+            if moving is None:
+                # Check how far from our station are we
+                latitude=vehicleData['drive_state']['latitude']
+                longitude=vehicleData['drive_state']['longitude']
+
+                # Now check if we're close to our station. If not, ignore the rain
+                station = (station_latitude, station_longitude)
+                car = (float(latitude), float(longitude))
+                distance = float(geopy.distance.geodesic(station, car).km)
+                print("Debug: We're " + str(distance) + " km away")
+                if distance < max_distance:
+                    next_run = now + timedelta(minutes = 1)	# Check every minute when the car is awake and parked to reduce the chance of missing a window opening
+                else:
+                    next_run = now + timedelta(minutes = 5)	# Check every five minutes when the car is not parked. With 5 minutes interval, we're sure to hit the 'Park' spot before it goes to sleep (roughly 10 minutes)
+            else:
+                next_run = now + timedelta(minutes = 5)	# Check every five minutes when the car is not parked. With 5 minutes interval, we're sure to hit the 'Park' spot before it goes to sleep (roughly 10 minutes)
+
             print("Tesla: Number of windows open: " + str(windows) + " - Moving is: " + str(moving))
         else:
             next_run = now + timedelta(minutes = 5)	# We're asleep so check back in 5 minutes
