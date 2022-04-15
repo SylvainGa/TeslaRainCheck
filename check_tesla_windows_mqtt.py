@@ -8,6 +8,7 @@ import json
 import time
 import smtplib
 import configparser
+import geopy.distance
 import paho.mqtt.client as mqtt
 from datetime import datetime, timedelta
 
@@ -51,6 +52,7 @@ def on_message(client, userdata, msg):
 
     #rain_cm = "0.01"	# To test the code when it rains
 
+    global Config
     global next_run
     global tesla
     global vehicles
@@ -99,7 +101,7 @@ def on_message(client, userdata, msg):
             rp_window = int(vehicleData['vehicle_state']['rp_window'])
             windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
             
-            print("Tesla: Number of windows open: " + str(windows) + " Moving is " + str(moving))
+            print("Tesla: Number of windows open: " + str(windows) + " - Moving is: " + str(moving))
         else:
             next_run = now + timedelta(minutes = 5)	# We're asleep so check back in 5 minutes
 
@@ -125,15 +127,22 @@ def on_message(client, userdata, msg):
                     windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
 
                 if moving is None and windows > 0:
-                    emailBody = "We're parked with our windows opened in the rain! Closing them"
-
                     if vehicles[vehicle].available() == False:    # Wake the car if asleep
                         vehicles[vehicle].sync_wake_up()  # We need to get up to date data so no choice but to wake it
 
                     vehicleData = vehicles[vehicle].get_vehicle_data()
                     latitude=vehicleData['drive_state']['latitude']
                     longitude=vehicleData['drive_state']['longitude']
-                    vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=latitude, lon=longitude)
+
+                    # Now check if we're close to our station. If not, ignore the rain
+                    station = (station_latitude, station_longitude)
+                    car = (float(latitude), float(longitude))
+                    distance = float(geopy.distance.geodesic(station, car).km)
+                    if distance < max_distance:
+                        vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=latitude, lon=longitude)
+                        emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
+                    else:
+                        emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
                 else:
                     emailBody = "It's raining but our windows are closed"
 
@@ -169,6 +178,9 @@ next_run = datetime.now()
 vehicle = int(Config.get('Tesla', 'vehicle'))
 windows = int(Config.get('Tesla', 'windows'))	# Reading initial states of windows. -1 means wake the car to read, 0 means assume they are closed, anything else assume they are open
 sendTo = Config.get('Email', 'to')
+station_latitude = float(Config.get('MQTT', 'latitude'))
+station_longitude = float(Config.get('MQTT', 'longitude'))
+max_distance = float(Config.get('MQTT', 'max_distance'))
 
 # Set up our MQTT connection
 client = mqtt.Client()
