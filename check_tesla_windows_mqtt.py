@@ -68,7 +68,7 @@ def on_message(client, userdata, msg):
         # Connect to our car (at least once) to get the status of the windows
         if tesla is None:
             print("Tesla: Connecting to car")
-            tesla = teslapy.Tesla(Config.get('Tesla', 'username'))
+            tesla = teslapy.Tesla(Config.get('Tesla', 'username'), retry=3, timeout=20)
 
         if not tesla.authorized:
             expires_at = tesla.token['expires_at']
@@ -140,7 +140,6 @@ def on_message(client, userdata, msg):
                     rd_window = int(vehicleData['vehicle_state']['rd_window'])
                     rp_window = int(vehicleData['vehicle_state']['rp_window'])
                     windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
-
                 if moving is None and windows > 0:
                     if vehicles[vehicle].available() == False:    # Wake the car if asleep
                         vehicles[vehicle].sync_wake_up()  # We need to get up to date data so no choice but to wake it
