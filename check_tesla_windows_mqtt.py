@@ -6,6 +6,7 @@ sys.path.insert(0, './TeslaPy')
 import teslapy
 import json
 import time
+from threading import Timer
 import smtplib
 import configparser
 import geopy.distance
@@ -60,8 +61,13 @@ def on_message(client, userdata, msg):
     global moving
     global windows
     global raining
+    global lastRun
+    global ran
 
     now = datetime.now()
+    lastRun = datetime.now();
+    ran = True
+
     if now >= next_run:  # We do a run after 5 minutes
         #print("Debug: Times up, querying the car")
 
@@ -176,6 +182,31 @@ def on_message(client, userdata, msg):
         current_time = now.strftime("%H:%M:%S")
         print("Tesla: " + current_time + " No rain data, skipping")
 
+class RepeatTimer(Timer):
+    def run(self):
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)
+
+def timer():
+    global lastRun
+    global ran
+
+    now = datetime.now()
+    current_time = now.strftime("%H:%M:%S")
+    print("Tesla: " + current_time + ": Last ran at " + lastRun.strftime("%H:%M:%S"))
+
+    if lastRun + timedelta(seconds = 60) < now:
+        if ran == True:
+            ran = False
+
+            emailBody = "Last ran at " + lastRun.strftime("%H:%M:%S")
+
+            sender = Emailer()
+            emailSubject = "Tesla: WeeWX - MQTT thread hasn't ran in over a minute"
+            sender.sendmail(sendTo, emailSubject, emailBody)
+                
+            print(emailSubject)
+
 ####### Start here
 
 # Read our config
@@ -195,6 +226,8 @@ sendTo = Config.get('Email', 'to')
 station_latitude = float(Config.get('MQTT', 'latitude'))
 station_longitude = float(Config.get('MQTT', 'longitude'))
 max_distance = float(Config.get('MQTT', 'max_distance'))
+lastRun = datetime.now()
+ran = True
 
 # Set up our MQTT connection
 client = mqtt.Client()
@@ -207,6 +240,10 @@ client.username_pw_set(username = Config.get('MQTT', 'username'), password = Con
 
 print("Tesla: Connecting to MQTT...")
 client.connect(Config.get('MQTT', 'hostname'), int(Config.get('MQTT', 'port')), 60)
+
+print("Tesla: Starting watchdog thread with interval of 60 seconds")
+T = RepeatTimer(60, timer)
+T.start()
 
 # Blocking call that processes network traffic, dispatches callbacks and
 # handles reconnecting.
