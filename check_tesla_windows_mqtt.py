@@ -110,15 +110,15 @@ def on_message(client, userdata, msg):
                 latitude=vehicleData['drive_state']['latitude']
                 longitude=vehicleData['drive_state']['longitude']
 
-                # Now check if we're close to our station. If not, ignore the rain
+                # Now check if we're close to our station. If not, poll at a lower frequency
                 station = (station_latitude, station_longitude)
                 car = (float(latitude), float(longitude))
                 distance = float(geopy.distance.geodesic(station, car).km)
                 print("Debug: We're " + str(distance) + " km away")
                 if distance < max_distance:
-                    next_run = now + timedelta(minutes = 1)	# Check every minute when the car is awake and parked to reduce the chance of missing a window opening
+                    next_run = now + timedelta(minutes = 1)	# Check every minute when the car is close to our station to reduce the chance of missing a window opening before going to sleep
                 else:
-                    next_run = now + timedelta(minutes = 5)	# Check every five minutes when the car is not parked. With 5 minutes interval, we're sure to hit the 'Park' spot before it goes to sleep (roughly 10 minutes)
+                    next_run = now + timedelta(minutes = 5)	# Check every five minutes when the car is far from our station
             else:
                 next_run = now + timedelta(minutes = 5)	# Check every five minutes when the car is not parked. With 5 minutes interval, we're sure to hit the 'Park' spot before it goes to sleep (roughly 10 minutes)
 
@@ -127,6 +127,7 @@ def on_message(client, userdata, msg):
             next_run = now + timedelta(minutes = 5)	# We're asleep so check back in 5 minutes
 
             print("Tesla: Vehicle is sleeping, shhh")
+
     # Read how much rain as fallen
     if rain_cm is not None:
         now = datetime.now()
