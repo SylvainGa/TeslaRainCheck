@@ -75,6 +75,7 @@ def on_message(client, userdata, msg):
         if tesla is None:
             print("Tesla: Connecting to car")
             tesla = teslapy.Tesla(Config.get('Tesla', 'username'), retry=3, timeout=20)
+            print("Tesla: Connected")
 
         if not tesla.authorized:
             expires_at = tesla.token['expires_at']
@@ -114,7 +115,7 @@ def on_message(client, userdata, msg):
                 station = (station_latitude, station_longitude)
                 car = (float(latitude), float(longitude))
                 distance = float(geopy.distance.geodesic(station, car).km)
-                print("Debug: We're " + str(distance) + " km away")
+                #print("Debug: We're " + str(distance) + " km away")
                 if distance < max_distance:
                     next_run = now + timedelta(minutes = 1)	# Check every minute when the car is close to our station to reduce the chance of missing a window opening before going to sleep
                 else:
@@ -122,17 +123,17 @@ def on_message(client, userdata, msg):
             else:
                 next_run = now + timedelta(minutes = 5)	# Check every five minutes when the car is not parked. With 5 minutes interval, we're sure to hit the 'Park' spot before it goes to sleep (roughly 10 minutes)
 
-            print("Tesla: Number of windows open: " + str(windows) + " - Moving is: " + str(moving))
+            #print("Tesla: Number of windows open: " + str(windows) + " - Moving is: " + str(moving))
         else:
             next_run = now + timedelta(minutes = 5)	# We're asleep so check back in 5 minutes
 
-            print("Tesla: Vehicle is sleeping, shhh")
+            #print("Tesla: Vehicle is sleeping, shhh")
 
     # Read how much rain as fallen
     if rain_cm is not None:
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
-        print("Tesla: " + current_time + ": " + rain_cm + " cm")
+        #print("Tesla: " + current_time + ": " + rain_cm + " cm")
 
         rain = float(rain_cm)
         if rain > 0.0:
@@ -173,15 +174,15 @@ def on_message(client, userdata, msg):
                 
                 print(emailSubject)
                 print("Tesla: " + emailBody)
-            else:
-                print("Tesla: Already checked for this rain period, skipping")
+            #else:
+                #print("Tesla: Already checked for this rain period, skipping")
         else:
             raining = False
-            print("Tesla: All is fine")
+            #print("Tesla: All is fine")
     else:
         now = datetime.now()
         current_time = now.strftime("%H:%M:%S")
-        print("Tesla: " + current_time + " No rain data, skipping")
+        #print("Tesla: " + current_time + " No rain data, skipping")
 
 class RepeatTimer(Timer):
     def run(self):
@@ -194,7 +195,7 @@ def timer():
 
     now = datetime.now()
     current_time = now.strftime("%H:%M:%S")
-    print("Tesla: " + current_time + ": Last ran at " + lastRun.strftime("%H:%M:%S"))
+    #print("Tesla: " + current_time + ": Last ran at " + lastRun.strftime("%H:%M:%S"))
 
     if lastRun + timedelta(seconds = 60) < now:
         if ran == True:
