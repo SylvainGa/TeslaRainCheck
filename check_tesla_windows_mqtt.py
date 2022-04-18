@@ -19,7 +19,6 @@ class Emailer:
         SMTP_PORT = 587 #Server Port (don't change!)
         GMAIL_USERNAME = Config.get('Email', 'username') #change this to match your gmail account
         GMAIL_PASSWORD = Config.get('Email', 'password') #change this to match your gmail password
-        #GMAIL_PASSWORD = 'Hi9zeepeet9n' #change this to match your gmail password
 
         #Create Headers
         headers = ["From: " + GMAIL_USERNAME, "Subject: " + subject, "To: " + recipient, "MIME-Version: 1.0", "Content-Type: text/html"]
