@@ -6,6 +6,8 @@ sys.path.insert(0, './TeslaPy')
 import teslapy
 import json
 import time
+import pytz
+from suntime import Sun
 from threading import Timer
 import smtplib
 import configparser
@@ -62,11 +64,13 @@ def on_message(client, userdata, msg):
     global raining
     global lastRun
     global ran
-
+    global night
+    
     now = datetime.now()
-    lastRun = datetime.now();
+    lastRun = now
     ran = True
-
+    current_time = now.strftime("%H:%M:%S")
+    
     if now >= next_run:  # We do a run after 5 minutes
         #print("Debug: Times up, querying the car")
 
@@ -125,13 +129,42 @@ def on_message(client, userdata, msg):
             #print("Tesla: Number of windows open: " + str(windows) + " - Moving is: " + str(moving))
         else:
             next_run = now + timedelta(minutes = 5)	# We're asleep so check back in 5 minutes
-
             #print("Tesla: Vehicle is sleeping, shhh")
+
+        # Check if the sun has set and our windows are still opened
+        sun = Sun(station_latitude, station_longitude)
+        today_ss = sun.get_sunset_time()
+        tz_toronto = pytz.timezone('America/Toronto')
+        now_tz = tz_toronto.localize(now)
+        #print("Debug: today_ss: " + str(today_ss))
+        #print("Debug: now_tz: " + str(now_tz))
+        if now_tz > today_ss:
+            if night == False:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
+                if moving is None:
+                    night = True
+                    if  windows > 0:
+                        if vehicles[vehicle].available() == False:    # Wake the car if asleep
+                            vehicles[vehicle].sync_wake_up()  # We need to get up to date data so no choice but to wake it
+
+                        vehicleData = vehicles[vehicle].get_vehicle_data()
+                        latitude=vehicleData['drive_state']['latitude']
+                        longitude=vehicleData['drive_state']['longitude']
+
+                        vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=latitude, lon=longitude)
+                        emailBody = "Closing windows because it's night time."
+
+                        sender = Emailer()
+                        emailSubject = "Tesla: WeeWX - Windows were opened at sunset (" + current_time + ")"
+                        sender.sendmail(sendTo, emailSubject, emailBody)
+                        
+                        print(emailSubject)
+                        print("Tesla: " + emailBody)
+        else:
+            night = False
+            #print("Debug: Still daytime with diff of " + str(today_ss - now_tz))
 
     # Read how much rain as fallen
     if rain_cm is not None:
-        now = datetime.now()
-        current_time = now.strftime("%H:%M:%S")
         #print("Tesla: " + current_time + ": " + rain_cm + " cm")
 
         rain = float(rain_cm)
@@ -164,15 +197,15 @@ def on_message(client, userdata, msg):
                         emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
                     else:
                         emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
-                else:
-                    emailBody = "It's raining but our windows are closed"
 
-                sender = Emailer()
-                emailSubject = "Tesla: WeeWX - It has rained " + rain_cm + " cm at " + current_time
-                sender.sendmail(sendTo, emailSubject, emailBody)
+                    emailSubject = "Tesla: WeeWX - It has rained " + rain_cm + " cm at " + current_time
+                    sender = Emailer()
+                    sender.sendmail(sendTo, emailSubject, emailBody)
                 
-                print(emailSubject)
-                print("Tesla: " + emailBody)
+                    print(emailSubject)
+                    print("Tesla: " + emailBody)
+                else:
+                    print("Tesla: WeeWX - It has rained " + rain_cm + " cm at " + current_time + " but our windows are closed")
             #else:
                 #print("Tesla: Already checked for this rain period, skipping")
         else:
@@ -229,6 +262,7 @@ station_longitude = float(Config.get('MQTT', 'longitude'))
 max_distance = float(Config.get('MQTT', 'max_distance'))
 lastRun = datetime.now()
 ran = True
+night = False
 
 # Set up our MQTT connection
 client = mqtt.Client()
