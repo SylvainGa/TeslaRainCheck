@@ -100,7 +100,12 @@ def on_message(client, userdata, msg):
             tesla.refresh_token(refresh_token = Config.get('Tesla', 'refresh_token'))
 
         available = False
-        vehicles = tesla.vehicle_list()
+        try:
+            vehicles = tesla.vehicle_list()
+        except:
+            print("Caught exception in vehicle_list : " + sys.exc_info()[0])
+            return
+
         #print("Debug: Looking for vehicle " + str(vehicle))
         if vehicles[vehicle]['state'] != 'asleep':
             available = True
@@ -279,10 +284,12 @@ def timer():
             emailBody = "Last ran at " + lastRun.strftime("%H:%M:%S")
 
             sender = Emailer()
-            emailSubject = "Tesla: WeeWX - MQTT thread hasn't ran in over a minute"
+            emailSubject = "Tesla: WeeWX - MQTT thread hasn't ran in over a minute, quitting program"
             sender.sendmail(sendTo, emailSubject, emailBody)
                 
             print(emailSubject)
+
+            quit(1)
 
 ####### Start here
 
