@@ -82,7 +82,8 @@ def on_message(client, userdata, msg):
         # Connect to our car (at least once) to get the status of the windows
         if tesla is None:
             print("Tesla: Connecting to car")
-            tesla = teslapy.Tesla(Config.get('Tesla', 'username'), retry=3, timeout=20)
+            retry = teslapy.Retry(total=5, status_forcelist=(408, 500, 502, 503, 504, 540))
+            tesla = teslapy.Tesla(Config.get('Tesla', 'username'), retry=retry, timeout=10)
             print("Tesla: Connected")
 
         if not tesla.authorized:
@@ -100,11 +101,8 @@ def on_message(client, userdata, msg):
             tesla.refresh_token(refresh_token = Config.get('Tesla', 'refresh_token'))
 
         available = False
-        try:
-            vehicles = tesla.vehicle_list()
-        except:
-            print("Caught exception in vehicle_list : " + sys.exc_info()[0])
-            return
+
+        vehicles = tesla.vehicle_list()
 
         #print("Debug: Looking for vehicle " + str(vehicle))
         if vehicles[vehicle]['state'] != 'asleep':
@@ -193,17 +191,17 @@ def on_message(client, userdata, msg):
             if response.status_code == 200:
                 data = response.json()
                 icon = data['weather'][0]['icon']
-                if int(icon[0:2]) < 5: # Icon with a number lower than 5 means there is some sun showing
+                if int(icon[0:2]) < 4: # Icon with a number lower than 4 means there is some sun showing
                     if today_sr + timedelta(hours=3) < now_tz < today_ss - timedelta(hours=3): # Sun is up high enough in the sky
                         if out_temp > 10.0: # Below 10C means it's not hot enough to overheat the cabin
                             vehicles[vehicle].sync_wake_up()  # Keep the car awake so cabin overheat protection can do its stuff if needed
-                            print("Debug: Some sun at least with " + data['weather'][0]['description'] + " during mid-day and outside is warm at " + str(out_temp) + "C, keeping the car awake so cabin overheat can do its job")
+                            print("Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(out_temp) + "C, keeping the car awake so cabin overheat can do its job")
                         else:
-                            print("Debug: Some sun at least with " + data['weather'][0]['description'] + " during mid-day and outside is cold at " + str(out_temp) + "C")
+                            print("Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is cold at " + str(out_temp) + "C")
                     else:
-                        print("Debug: Some sun at least with " + data['weather'][0]['description'] + " but too early or late to be warm enough")
+                        print("Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") but too early or late to be warm enough")
                 else:
-                    print("Debug: Sun shouldn't be visible with " + data['weather'][0]['description'])
+                    print("Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ")")
             else:
                 print("Debug: OWN returned " + str(response.status_code))
 
