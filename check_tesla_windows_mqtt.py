@@ -153,10 +153,13 @@ def on_message(client, userdata, msg):
 
         # Check if the sun has set and our windows are still opened
         sun = Sun(station_latitude, station_longitude)
-        today_ss = sun.get_sunset_time()
         today_sr = sun.get_sunrise_time()
+        today_ss = sun.get_sunset_time()
+        if today_sr > today_ss:
+            today_ss = today_ss + timedelta(days=1) # Bug in the routine, day isn't update when crossing over midnight in UTC timezone
         tz_toronto = pytz.timezone('America/Toronto')
         now_tz = tz_toronto.localize(now)
+        #print("Debug: today_sr: " + str(today_sr))
         #print("Debug: today_ss: " + str(today_ss))
         #print("Debug: now_tz: " + str(now_tz))
         if now_tz > today_ss:
@@ -195,7 +198,10 @@ def on_message(client, userdata, msg):
                     if today_sr + timedelta(hours=3) < now_tz < today_ss - timedelta(hours=3): # Sun is up high enough in the sky
                         if out_temp > 10.0: # Below 10C means it's not hot enough to overheat the cabin
                             vehicles[vehicle].sync_wake_up()  # Keep the car awake so cabin overheat protection can do its stuff if needed
-                            print("Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(out_temp) + "C, keeping the car awake so cabin overheat can do its job")
+                            vehicleData = vehicles[vehicle].get_vehicle_data()
+                            inside_temp = vehicleData['climate_state']['inside_temp']
+
+                            print("Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(out_temp) + "C with inside at " + str(inside_temp) + "C, keeping the car awake so cabin overheat can do its job")
                         else:
                             print("Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is cold at " + str(out_temp) + "C")
                     else:
