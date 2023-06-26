@@ -15,6 +15,7 @@ import configparser
 import geopy.distance
 import paho.mqtt.client as mqtt
 from datetime import datetime, timedelta, time
+from pprint import pprint
 
 # Class used to send an email 
 class Emailer:
@@ -54,19 +55,24 @@ def on_mqtt_message(client, userdata, msg):
     jsondata = json.loads(str(msg.payload.decode('utf-8')))
     rain_cm = jsondata.get('rain_cm')
 
-    #rain_cm = "0.01"	# To test the code when it rains
+    #rain_cm = "0.01"	# DEBUG To test the code when it rains
 
-    global raining
-    global mqtt_lastRun
-    global mqtt_ran
-    global out_temp
+    global g_raining
+    global g_mqtt_lastRun
+    global g_mqtt_ran
+    global g_out_temp
+
+    global g_windows
+    global g_moving
+    global g_longitude
+    global g_latitude
  
     if jsondata.get('outTemp_C') is not None:
-        out_temp = float(jsondata.get('outTemp_C'))
+        g_out_temp = float(jsondata.get('outTemp_C'))
 
     now = datetime.now()
-    mqtt_lastRun = now
-    mqtt_ran = True
+    g_mqtt_lastRun = now
+    g_mqtt_ran = True
     current_time = now.strftime("%H:%M:%S")
 
     # Read how much rain as fallen
@@ -77,29 +83,41 @@ def on_mqtt_message(client, userdata, msg):
 
     print("Tesla-MQTT: " + current_time + ": " + str(rain) + " cm")
     if rain > 0.0:
-        if raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
-            raining = True
+        if g_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
+            g_raining = True
 
             authenticateVehicle(tesla)
             vehicles = tesla.vehicle_list()
-            vehicleData = vehicles[vehicle].get_latest_vehicle_data()
-            moving = vehicleData['drive_state']['shift_state']
+            if vehicles[vehicle].available() == False and g_windows is None:
+                # We need to wake up to get our first set of data
+                vehicles[vehicle].sync_wake_up()
+
+            vehicleData = vehicles[vehicle].get_vehicle_data()
+            if 'drive_state' in vehicleData:
+                g_moving = vehicleData['drive_state']['shift_state']
+            else:
+                print("Missing drive_state")
             fd_window = int(vehicleData['vehicle_state']['fd_window'])
             fp_window = int(vehicleData['vehicle_state']['fp_window'])
             rd_window = int(vehicleData['vehicle_state']['rd_window'])
             rp_window = int(vehicleData['vehicle_state']['rp_window'])
-            windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
-            if moving is None and windows > 0: # vehicle is parked with some windows opened
-                latitude = vehicleData['drive_state']['latitude']
-                longitude = vehicleData['drive_state']['longitude']
+            g_windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
+            if g_moving is None and g_windows > 0: # vehicle is parked with some windows opened
+                if 'drive_state' in vehicleData:
+                    g_latitude = vehicleData['drive_state']['latitude']
+                    g_longitude = vehicleData['drive_state']['longitude']
+
+                if g_latitude == None or g_longitude == None:
+                    print("Missing Latitude or Longitude, cannot proceed to check if we're close to our station")
+                    return 
 
                 # Now check if we're close to our station. If not, ignore the rain
                 station = (station_latitude, station_longitude)
-                vehicle_position = (float(latitude), float(longitude))
+                vehicle_position = (float(g_latitude), float(g_longitude))
                 distance = float(geopy.distance.geodesic(station, vehicle_position).km)
                 if distance < max_distance:
                     vehicles[vehicle].sync_wake_up()  # We need wake up the vehicle to close its windows
-                    vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=latitude, lon=longitude)
+                    vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=g_latitude, lon=g_longitude)
                     emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
                 else:
                     emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
@@ -115,7 +133,7 @@ def on_mqtt_message(client, userdata, msg):
         else:
             print("Tesla-MQTT: Skipping, waiting for the rain to stop")
     else:
-        raining = False
+        g_raining = False
         #print("Tesla-MQTT: All is fine")
 
 class RepeatTimer(Timer):
@@ -124,19 +142,19 @@ class RepeatTimer(Timer):
             self.function(*self.args, **self.kwargs)
 
 def on_watchdog():
-    global mqtt_ran
-    global timer_ran
+    global g_mqtt_ran
+    global g_timer_ran
 
     now = datetime.now()
     current_time = now.strftime("%H:%M:%S")
-    print("Tesla-WD: " + current_time + ": Last mqtt thread ran at " + mqtt_lastRun.strftime("%H:%M:%S") + " last timer thread ran at " + timer_lastRun.strftime("%H:%M:%S"))
+    print("Tesla-WD: " + current_time + ": Last mqtt thread ran at " + g_mqtt_lastRun.strftime("%H:%M:%S") + " last timer thread ran at " + g_timer_lastRun.strftime("%H:%M:%S"))
 
     # If our last mqtt data fetch plus 60 seconds is less than now, the mqtt hasn't received data for too long
-    if mqtt_lastRun + timedelta(seconds = 60) < now:
-        if mqtt_ran == True:
-            mqtt_ran = False
+    if g_mqtt_lastRun + timedelta(seconds = 60) < now:
+        if g_mqtt_ran == True:
+            g_mqtt_ran = False
 
-            emailBody = "Last ran at " + mqtt_lastRun.strftime("%H:%M:%S")
+            emailBody = "Last ran at " + g_mqtt_lastRun.strftime("%H:%M:%S")
 
             sender = Emailer()
             emailSubject = "Tesla-WD: WeeWX - MQTT thread hasn't ran in over a minute, quitting program"
@@ -147,11 +165,11 @@ def on_watchdog():
             quit(1) # Quit so systemctl respawn the process because 60 seconds without data from the station isn't normal
 
     # If our last timer run plus 90 seconds is less than now, the timer hasn't ran for too long
-    if timer_lastRun + timedelta(seconds = 90) < now:
-        if timer_ran == True:
-            timer_ran = False
+    if g_timer_lastRun + timedelta(seconds = 90) < now:
+        if g_timer_ran == True:
+            g_timer_ran = False
 
-            emailBody = "Last ran at " + timer_lastRun.strftime("%H:%M:%S")
+            emailBody = "Last ran at " + g_timer_lastRun.strftime("%H:%M:%S")
 
             sender = Emailer()
             emailSubject = "Tesla-WD: WeeWX - Timer thread hasn't ran in over 1.5 minutes, quitting program"
@@ -162,37 +180,57 @@ def on_watchdog():
             quit(1) # Quit so systemctl respawn the process because 90 seconds without running the timer isn't normal
 
 def on_timer():
-    global night
-    global timer_lastRun
-    global timer_ran
-    global awaken_since
+    global g_night
+    global g_timer_lastRun
+    global g_timer_ran
+    global g_out_temp
+    global g_windows
+    global g_moving
+    global g_longitude
+    global g_latitude
     
     now = datetime.now()
-    timer_lastRun = now
-    timer_ran = True
+    g_timer_lastRun = now
+    g_timer_ran = True
 
     current_time = now.strftime("%H:%M:%S")
 
     # Read data that I need from the vehicle
     authenticateVehicle(tesla)
     vehicles = tesla.vehicle_list()
-    vehicleData = vehicles[vehicle].get_latest_vehicle_data()
-    moving = vehicleData['drive_state']['shift_state']
+    if vehicles[vehicle].available() == True:
+        print("Vehicle is online")
+    else:
+        print("Vehicle is " + vehicles[vehicle]['state'] + ", last seen " + vehicles[vehicle].last_seen() + " at " + str(vehicles[vehicle]['charge_state']['battery_level']) + "% SoC")
+        if g_windows is None and wake_at_start == 1:
+            # We need to wake up to get our first set of data
+            print("We need to wake up to get our first set of data")
+            vehicles[vehicle].sync_wake_up()
 
-    if moving is not None:
-        print("Tesla-Timer: Debug: Vehicle in motion, skipping checking inside temperature and windows")
+    vehicleData = vehicles[vehicle].get_vehicle_data()
+    if 'drive_state' in vehicleData:
+        g_moving = vehicleData['drive_state']['shift_state']
+    else:
+        print("Missing drive_state")
+            
+    if g_moving is not None:
+        print("Vehicle in motion, skipping checking inside temperature and windows")
         return
 
     fd_window = int(vehicleData['vehicle_state']['fd_window'])
     fp_window = int(vehicleData['vehicle_state']['fp_window'])
     rd_window = int(vehicleData['vehicle_state']['rd_window'])
     rp_window = int(vehicleData['vehicle_state']['rp_window'])
-    windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
-    latitude = vehicleData['drive_state']['latitude']
-    longitude = vehicleData['drive_state']['longitude']
+    g_windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
+    if 'drive_state' in vehicleData:
+        g_latitude = vehicleData['drive_state']['latitude']
+        g_longitude = vehicleData['drive_state']['longitude']
     
+    if g_latitude == None or g_longitude == None:
+        print("Missing Latitude or Longitude, cannot proceed to check sunset/sunrise")
+        return 
     # Check if the sun has set and if our windows are still opened
-    sun = Sun(latitude, longitude)
+    sun = Sun(g_latitude, g_longitude)
     today_sr = sun.get_sunrise_time()
     today_ss = sun.get_sunset_time()
     if today_sr > today_ss:
@@ -202,69 +240,70 @@ def on_timer():
     print("Tesla-Timer: Debug: today_sr: " + str(today_sr))
     print("Tesla-Timer: Debug: today_ss: " + str(today_ss))
     print("Tesla-Timer: Debug: now_tz: " + str(now_tz))
-    if now_tz > today_ss:
-        print("Tesla-Timer: Debug: It's night, check if our windows are closed")
-        if night == False:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
-            if moving is None:
-                night = True
-                if  windows > 0:
-                    vehicles[vehicle].sync_wake_up()  # We need wake up the vehicle to close its windows
-                    vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=latitude, lon=longitude)
-                    emailBody = "Closing windows because it's night time."
+    if today_sr > now_tz or now_tz > today_ss:
+        if g_night == False:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
+            g_night = True
+            print("Tesla-Timer: It's night, check if our windows are closed")
+            if g_windows is not None and g_windows > 0:
+                vehicles[vehicle].sync_wake_up()  # We need wake up the vehicle to close its windows
+                vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=g_latitude, lon=g_longitude)
+                emailBody = "Closing windows because it's night time."
 
-                    sender = Emailer()
-                    emailSubject = "Tesla-Timer: WeeWX - Windows were opened at sunset (" + current_time + ")"
-                    sender.sendmail(sendTo, emailSubject, emailBody)
+                sender = Emailer()
+                emailSubject = "Tesla-Timer: WeeWX - Windows were opened at sunset (" + current_time + ")"
+                sender.sendmail(sendTo, emailSubject, emailBody)
 
-                    print(emailSubject)
-                    print("Tesla-Timer: " + emailBody)
+                print(emailSubject)
+                print("Tesla-Timer: " + emailBody)
+            else:
+                print("Our windows are closed")
     else:
-        night = False
+        g_night = False
         print("Tesla-Timer: Debug: Still daytime with diff of " + str(today_ss - now_tz))
 
-    # Check if it's during the hottest part of the day, it's warm outside and the sun might be out - All conditions to have a warm inside. If set, keep the vehicle awake so cabin protection can do its stuff
-    if owm_key is not None:
-        URL = "https://api.openweathermap.org/data/2.5/weather?lat=" + str(latitude) + "&lon=" + str(longitude) + "&appid=" + str(owm_key)
-        response = requests.get(URL)
-        if response.status_code == 200:
-            data = response.json()
-            icon = data['weather'][0]['icon']
-            if int(icon[0:2]) < 4: # Icon with a number lower than 4 means there is some sun showing
-                if today_sr + timedelta(hours=3) < now_tz < today_ss - timedelta(hours=3): # Sun is up high enough in the sky
-                    if out_temp > 10.0: # Below 10C means it's not hot enough to overheat the cabin
-                        # Before we go any further, we must make sure the battery level is at least 20% to prevent running down the battery too much
-                        soc = vehicleData['charge_state']['battery_level']
-                        if soc >= 20:
-                            if vehicles[vehicle]['state'] == 'asleep' or awaken_since + timedelta(minutes = 5) < now: # Check if we need to wake the vehicle
-                                print("Tesla-Timer: Debug: Wake the vehicle")
-                                vehicles[vehicle].sync_wake_up()  # Keep the vehicle awake so cabin overheat protection can do its stuff if needed <- Only works for 12 hours after a drive, not when awaken :-(
-                                vehicleData = vehicles[vehicle].get_vehicle_data()
-                                awaken_since = now
-                                
-                            if vehicles[vehicle]['state'] != 'asleep':
-                                vehicleData = vehicles[vehicle].get_vehicle_data()
-                                inside_temp = vehicleData['climate_state']['inside_temp']
-                                climate = vehicleData['climate_state']
-                                print("Tesla-Timer: Debug: Climate is " + str(climate))
-                                active_cooling =  vehicleData['climate_state']['cabin_overheat_protection_actively_cooling']
-                                print("Tesla-Timer: Debug: Fan is running: " + str(active_cooling))
-                                print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(out_temp) + "C with inside at " + str(inside_temp) + "C - The vehicle is awake!")
+        # Check if it's during the hottest part of the day, it's warm outside and the sun might be out - All conditions to have a warm inside. If set, keep the vehicle awake so cabin protection can do its stuff
+        if owm_key is not None:
+            URL = "https://api.openweathermap.org/data/2.5/weather?lat=" + str(g_latitude) + "&lon=" + str(g_longitude) + "&appid=" + str(owm_key)
+            response = requests.get(URL)
+            if response.status_code == 200:
+                data = response.json()
+                icon = data['weather'][0]['icon']
+                if int(icon[0:2]) < 4: # Icon with a number lower than 4 means there is some sun showing
+                    if today_sr + timedelta(hours=3) < now_tz < today_ss - timedelta(hours=3): # Sun is up high enough in the sky
+                        if vehicles[vehicle].available() == True:
+                            g_out_temp = vehicleData['climate_state']['outside_temp']
+
+                            if g_out_temp is not None and g_out_temp > 10.0: # Below 10C means it's not hot enough to overheat the cabin
+                                # Before we go any further, we must make sure the battery level is at least 20% to prevent running down the battery too much
+                                soc = vehicleData['charge_state']['battery_level']
+                                if soc >= 20:
+                                    #vehicles[vehicle].sync_wake_up()  # Keep the vehicle awake so cabin overheat protection can do its stuff if needed <- Only works for 12 hours after a drive, not when awaken :-(
+                                    if vehicles[vehicle]['state'] != 'asleep':
+                                        vehicleData = vehicles[vehicle].get_vehicle_data()
+                                        inside_temp = vehicleData['climate_state']['inside_temp']
+                                        climate = vehicleData['climate_state']
+                                        #print("Climate is " + str(climate))
+                                        active_cooling =  vehicleData['climate_state']['cabin_overheat_protection_actively_cooling']
+                                        print("Fan is running: " + str(active_cooling))
+                                        print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(g_out_temp) + "C with inside at " + str(inside_temp) + "C - The vehicle is awake!")
+                                    else:
+                                        print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(g_out_temp) + "C - Vehicle is asleep so can't get its inside temperature")
+                                else:
+                                    print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(g_out_temp) + "C but not waking the vehicle because SoC at " + str(soc) + "%")
                             else:
-                                print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(out_temp) + "C - Vehicle is asleep so can't get its inside temperature")
+                                print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is cold at " + str(g_out_temp) + "C")
                         else:
-                            print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + str(out_temp) + "C but not waking the vehicle because SoC at " + str(soc) + "%")
+                            print("Tesla-Timer: Debug: Vehicle is asleep, can't query for its temperature")
                     else:
-                        print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is cold at " + str(out_temp) + "C")
+                        print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") but too early or late to be warm enough")
                 else:
-                    print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") but too early or late to be warm enough")
+                    if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 50:
+                        owm_raining = data['weather'][0]['description']
+                    print("Tesla-Timer: Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ")")
             else:
-                if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 50:
-                    owm_raining = data['weather'][0]['description']
-                print("Tesla-Timer: Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ")")
+                print("Tesla-Timer: Debug: OWN returned " + str(response.status_code))
         else:
-            print("Tesla-Timer: Debug: OWN returned " + str(response.status_code))
-    else:
-        print("Tesla-Timer: Debug: Not OWM key")
+            print("Tesla-Timer: Debug: Not OWM")
 
 def authenticateVehicle(tesla):
     if not tesla.authorized:
@@ -280,6 +319,7 @@ def authenticateVehicle(tesla):
         print(emailSubject)
 
         tesla.refresh_token(refresh_token = Config.get('Tesla', 'refresh_token'))
+    print("Tesla: Authenticated")
 
 ####### Start here
 
@@ -288,9 +328,10 @@ Config = configparser.ConfigParser()
 Config.read("check_tesla_windows_mqtt.ini")
 
 # Initialise our global variables
-raining = False
+g_raining = False
 tesla = None
 vehicle = int(Config.get('Tesla', 'vehicle'))
+wake_at_start = int(Config.get('Tesla', 'wake_at_start'))
 sendTo = Config.get('Email', 'to')
 station_latitude = float(Config.get('MQTT', 'latitude'))
 station_longitude = float(Config.get('MQTT', 'longitude'))
@@ -298,13 +339,18 @@ station_longitude = float(Config.get('MQTT', 'longitude'))
 max_distance = float(Config.get('MQTT', 'max_distance'))
 owm_key = Config.get('OWM', 'api_key')
 
-mqtt_lastRun = datetime.now()
-mqtt_ran = True
-timer_lastRun = datetime.now()
-timer_ran = True
-night = False
-out_temp = 0
-awaken_since = 0
+g_mqtt_lastRun = datetime.now()
+g_mqtt_ran = True
+g_timer_lastRun = datetime.now()
+g_timer_ran = True
+g_night = False
+g_out_temp = None
+
+# These are our Tesla data we need to keep while we're running
+g_windows = None
+g_moving = None
+g_latitude = None
+g_longitude = None
 
 # Set up our MQTT connection
 client = mqtt.Client()
@@ -321,16 +367,32 @@ client.connect(Config.get('MQTT', 'hostname'), int(Config.get('MQTT', 'port')), 
 print("Tesla: Connecting to Tesla servers...")
 retry = teslapy.Retry(total=5, status_forcelist=(408, 500, 502, 503, 504, 540))
 tesla = teslapy.Tesla(Config.get('Tesla', 'username'), retry=retry, timeout=10)
+#print("***********************")
+#print("tesla is ")
+#pprint(vars(tesla))
+#print("***********************")
 if tesla is None:
     print("Tesla: Error connecting to Tesla servers")
 else:
     print("Tesla: Connected to Tesla servers")
 
+if vehicle < 0:
+    authenticateVehicle(tesla)
+    vehicles = tesla.vehicle_list()
+    i = 0;
+    for vehicle in vehicles:
+        print(str(i) + " = " + vehicles[i]['display_name'])
+        i += 1
+    quit()
+    
+print("Running first instace of the timer thread")
+on_timer()
+
 print("Tesla: Starting timer and watchdog thread with interval of 60 and 90 seconds respectively")
 T = RepeatTimer(60, on_timer)
 T.start()
 
-W = RepeatTimer(60, on_watchdog)
+W = RepeatTimer(90, on_watchdog)
 W.start()
 
 
