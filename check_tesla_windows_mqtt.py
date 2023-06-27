@@ -57,16 +57,12 @@ def on_mqtt_message(client, userdata, msg):
 
     #rain_cm = "0.01"	# DEBUG To test the code when it rains
 
-    global g_raining
+    global g_mqtt_raining
     global g_mqtt_lastRun
     global g_mqtt_ran
     global g_out_temp
+    global g_own_raining
 
-    global g_windows
-    global g_moving
-    global g_longitude
-    global g_latitude
- 
     if jsondata.get('outTemp_C') is not None:
         g_out_temp = float(jsondata.get('outTemp_C'))
 
@@ -83,59 +79,74 @@ def on_mqtt_message(client, userdata, msg):
 
     print("Tesla-MQTT: " + current_time + ": " + str(rain) + " cm")
     if rain > 0.0:
-        if g_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
-            g_raining = True
-
-            authenticateVehicle(tesla)
-            vehicles = tesla.vehicle_list()
-            if vehicles[vehicle].available() == False and g_windows is None:
-                # We need to wake up to get our first set of data
-                vehicles[vehicle].sync_wake_up()
-
-            vehicleData = vehicles[vehicle].get_vehicle_data()
-            if 'drive_state' in vehicleData:
-                g_moving = vehicleData['drive_state']['shift_state']
-            else:
-                print("Missing drive_state")
-            fd_window = int(vehicleData['vehicle_state']['fd_window'])
-            fp_window = int(vehicleData['vehicle_state']['fp_window'])
-            rd_window = int(vehicleData['vehicle_state']['rd_window'])
-            rp_window = int(vehicleData['vehicle_state']['rp_window'])
-            g_windows = fd_window + fp_window + rd_window + rp_window # 0 means close so when we add them up, anything but 0 means at least a window is opened
-            if g_moving is None and g_windows > 0: # vehicle is parked with some windows opened
-                if 'drive_state' in vehicleData:
-                    g_latitude = vehicleData['drive_state']['latitude']
-                    g_longitude = vehicleData['drive_state']['longitude']
-
-                if g_latitude == None or g_longitude == None:
-                    print("Missing Latitude or Longitude, cannot proceed to check if we're close to our station")
-                    return 
-
-                # Now check if we're close to our station. If not, ignore the rain
-                station = (station_latitude, station_longitude)
-                vehicle_position = (float(g_latitude), float(g_longitude))
-                distance = float(geopy.distance.geodesic(station, vehicle_position).km)
-                if distance < max_distance:
-                    vehicles[vehicle].sync_wake_up()  # We need wake up the vehicle to close its windows
-                    vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=g_latitude, lon=g_longitude)
-                    emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
-                else:
-                    emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
-
-                emailSubject = "Tesla-MQTT: WeeWX - It has rained " + rain_cm + " cm at " + current_time
-                sender = Emailer()
-                sender.sendmail(sendTo, emailSubject, emailBody)
-            
-                print(emailSubject)
-                print("Tesla-MQTT: " + emailBody)
-            else:
-                print("Tesla-MQTT: WeeWX - It has rained " + rain_cm + " cm at " + current_time + " and our windows are closed or the vehicle is moving")
+        if g_mqtt_raining == False and g_owm_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
+            g_mqtt_raining = True 
+            raining_check_windows() # It's raining according to MQTT, let's check our windows (and OWM hasn't seen rain yet)
         else:
             print("Tesla-MQTT: Skipping, waiting for the rain to stop")
     else:
-        g_raining = False
+        g_mqtt_raining = False
         #print("Tesla-MQTT: All is fine")
 
+def raining_check_windows():
+    global g_windows
+    global g_moving
+    global g_longitude
+    global g_latitude
+
+    authenticateVehicle(tesla)
+    vehicles = tesla.vehicle_list()
+    if vehicles[vehicle].available() == False and g_windows is None:
+        # We need to wake up to get our first set of data
+        vehicles[vehicle].sync_wake_up()
+
+    vehicleData = vehicles[vehicle].get_vehicle_data()
+    if 'drive_state' in vehicleData:
+        g_moving = vehicleData['drive_state']['shift_state']
+    else:
+        print("Missing drive_state")
+    fd_window = int(vehicleData['vehicle_state']['fd_window'])
+    fp_window = int(vehicleData['vehicle_state']['fp_window'])
+    rd_window = int(vehicleData['vehicle_state']['rd_window'])
+    rp_window = int(vehicleData['vehicle_state']['rp_window'])
+    g_windows = fd_window + fp_window + rd_window + rp_window # 0 means 'closed' so when we add them up, anything but 0 means at least a window is opened
+    if g_moving is None and g_windows > 0: # vehicle is parked with some windows opened
+        if 'drive_state' in vehicleData:
+            g_latitude = vehicleData['drive_state']['latitude']
+            g_longitude = vehicleData['drive_state']['longitude']
+            
+        if g_latitude != None and g_longitude != None:
+            latitude = g_latitude
+            logitude = g_longitude
+        else:
+            print("Missing Latitude or Longitude, assuming we're at our station")
+            latitude = station_latitude
+            longitude = station_longitude
+        
+        # Now check if we're close to our station. If not, ignore the rain
+        station = (station_latitude, station_longitude)
+        vehicle_position = (float(latitude), float(longitude))
+        distance = float(geopy.distance.geodesic(station, vehicle_position).km)
+
+        if distance < max_distance:
+            # This is where we close our windows
+            vehicles[vehicle].sync_wake_up()  # We need wake up the vehicle to close its windows
+            vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=g_latitude, lon=g_longitude)
+            emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
+        else:
+            emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
+
+        emailSubject = "Tesla-MQTT: WeeWX - It has rained " + rain_cm + " cm at " + current_time
+        sender = Emailer()
+        sender.sendmail(sendTo, emailSubject, emailBody)
+    
+        print(emailSubject)
+        print("Tesla-MQTT: " + emailBody)
+    else:
+        print("Tesla-MQTT: WeeWX - It has rained " + rain_cm + " cm at " + current_time + " and our windows are closed or the vehicle is moving")
+
+    return
+    
 class RepeatTimer(Timer):
     def run(self):
         while not self.finished.wait(self.interval):
@@ -188,6 +199,8 @@ def on_timer():
     global g_moving
     global g_longitude
     global g_latitude
+    global g_owm_raining
+    global g_mqtt_raining
     
     now = datetime.now()
     g_timer_lastRun = now
@@ -237,9 +250,9 @@ def on_timer():
         today_ss = today_ss + timedelta(days=1) # Bug in the routine, day isn't update when crossing over midnight in UTC timezone
     tz_toronto = pytz.timezone('America/Toronto')
     now_tz = tz_toronto.localize(now)
-    print("Tesla-Timer: Debug: today_sr: " + str(today_sr))
-    print("Tesla-Timer: Debug: today_ss: " + str(today_ss))
-    print("Tesla-Timer: Debug: now_tz: " + str(now_tz))
+    #print("Tesla-Timer: Debug: today_sr: " + str(today_sr))
+    #print("Tesla-Timer: Debug: today_ss: " + str(today_ss))
+    #print("Tesla-Timer: Debug: now_tz: " + str(now_tz))
     if today_sr > now_tz or now_tz > today_ss:
         if g_night == False:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
             g_night = True
@@ -266,6 +279,7 @@ def on_timer():
             URL = "https://api.openweathermap.org/data/2.5/weather?lat=" + str(g_latitude) + "&lon=" + str(g_longitude) + "&appid=" + str(owm_key)
             response = requests.get(URL)
             if response.status_code == 200:
+                g_owm_raining = False # We assume it's not raining
                 data = response.json()
                 icon = data['weather'][0]['icon']
                 if int(icon[0:2]) < 4: # Icon with a number lower than 4 means there is some sun showing
@@ -297,8 +311,13 @@ def on_timer():
                     else:
                         print("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") but too early or late to be warm enough")
                 else:
-                    if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 50:
-                        owm_raining = data['weather'][0]['description']
+                    if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 11:
+                        if g_mqtt_raining == False and g_owm_raining == False: # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
+                            g_owm_raining = True # It's raining according to OWM, let's check our windows (and MQTT hasn't seen rain yet)
+                            raining_check_windows()
+                        else:
+                            print("Tesla-Timer: Skipping, waiting for the rain to stop")
+
                     print("Tesla-Timer: Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ")")
             else:
                 print("Tesla-Timer: Debug: OWN returned " + str(response.status_code))
@@ -328,7 +347,6 @@ Config = configparser.ConfigParser()
 Config.read("check_tesla_windows_mqtt.ini")
 
 # Initialise our global variables
-g_raining = False
 tesla = None
 vehicle = int(Config.get('Tesla', 'vehicle'))
 wake_at_start = int(Config.get('Tesla', 'wake_at_start'))
@@ -351,6 +369,8 @@ g_windows = None
 g_moving = None
 g_latitude = None
 g_longitude = None
+g_mqtt_raining = False
+g_owm_raining = False
 
 # Set up our MQTT connection
 client = mqtt.Client()
