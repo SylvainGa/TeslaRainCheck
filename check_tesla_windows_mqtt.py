@@ -240,10 +240,15 @@ def on_timer():
         g_longitude = vehicleData['drive_state']['longitude']
     
     if g_latitude == None or g_longitude == None:
-        print("Missing Latitude or Longitude, cannot proceed to check sunset/sunrise")
-        return 
+        print("Missing Latitude or Longitude, assuming we're at our station")
+        latitude = station_latitude
+        longitude = station_longitude
+    else:
+        latitude = g_latitude
+        longitude = g_longitude
+    
     # Check if the sun has set and if our windows are still opened
-    sun = Sun(g_latitude, g_longitude)
+    sun = Sun(latitude, longitude)
     today_sr = sun.get_sunrise_time()
     today_ss = sun.get_sunset_time()
     if today_sr > today_ss:
@@ -259,7 +264,7 @@ def on_timer():
             print("Tesla-Timer: It's night, check if our windows are closed")
             if g_windows is not None and g_windows > 0:
                 vehicles[vehicle].sync_wake_up()  # We need wake up the vehicle to close its windows
-                vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=g_latitude, lon=g_longitude)
+                vehicles[vehicle].command('WINDOW_CONTROL', command='close', lat=latitude, lon=longitude)
                 emailBody = "Closing windows because it's night time."
 
                 sender = Emailer()
@@ -276,7 +281,7 @@ def on_timer():
 
         # Check if it's during the hottest part of the day, it's warm outside and the sun might be out - All conditions to have a warm inside. If set, keep the vehicle awake so cabin protection can do its stuff
         if owm_key is not None:
-            URL = "https://api.openweathermap.org/data/2.5/weather?lat=" + str(g_latitude) + "&lon=" + str(g_longitude) + "&appid=" + str(owm_key)
+            URL = "https://api.openweathermap.org/data/2.5/weather?lat=" + str(latitude) + "&lon=" + str(longitude) + "&appid=" + str(owm_key)
             response = requests.get(URL)
             if response.status_code == 200:
                 g_owm_raining = False # We assume it's not raining
