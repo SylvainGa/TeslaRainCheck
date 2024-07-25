@@ -191,9 +191,9 @@ def raining_check_windows(rain):
         vehicle_position = (float(latitude), float(longitude))
         distance = float(geopy.distance.geodesic(station, vehicle_position).km)
 
-        if distance < max_distance:
+        if distance < max_distance or rain < 0.0: # If we're close to our station or OWM has seen rain (uses the vehicle's location), close the windows
             # This is where we close our windows
-            response = tessie("command/close_windows", "")
+            response = tessie("command/close_windows", "?retry_duration=90")
             result = response.json().get("result")
             woke = response.json().get("woke")
             if result == True:
@@ -290,6 +290,7 @@ def on_timer():
     global g_mqtt_raining
     global g_already_sent_email_after_error
     global g_kill_prog
+    global g_retry
     
     now = datetime.now()
     g_timer_lastRun = now
@@ -376,26 +377,33 @@ def on_timer():
     #print("Tesla-Timer: " + current_time + " Debug: today_sr: " + str(today_sr))
     #print("Tesla-Timer: " + current_time + " Debug: today_ss: " + str(today_ss))
     #print("Tesla-Timer: " + current_time + " Debug: now_tz: " + str(now_tz))
+
+    g_owm_raining = False # We assume it's not raining
+
     if today_sr > now_tz or now_tz > today_ss:
         print("Tesla-Timer: " + current_time + " Debug: " + current_time + " is night")
-        if g_night == False:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
+        if g_night == False or g_retry == 10:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
             g_night = True
             print("Tesla-Timer: " + current_time + " It's night, check if our windows are closed")
             if g_windows is not None and g_windows > 0:
-                response = tessie("command/close_windows", "")
+                response = tessie("command/close_windows", "?retry_duration=90")
                 status_code = response.status_code
                 if status_code == 200:
+                    
                     result = response.json().get("result")
                     woke = response.json().get("woke")
                     if result == True:
+                        g_retry = 0
                         emailBody = "Closing windows because it's night time."
 
                         emailSubject = "Tesla-Timer: Windows were opened at sunset (" + current_time + ")"
                     else:
+                        g_retry = g_retry + 1
                         emailBody = "Unable to close windows at sunset. Check vehicle!"
 
                         emailSubject = "Tesla-Timer: " + emailBody
                 else:
+                    g_retry = g_retry + 1
                     emailBody = "Unable to close windows at sunset. Status code was " + str(status_code) + " Check vehicle!"
 
                     emailSubject = "Tesla-Timer: " + emailBody
@@ -404,10 +412,12 @@ def on_timer():
                 sender.sendmail(sendTo, emailSubject, emailBody)
 
                 print(emailSubject)
-                print("Tesla-Timer: " + emailBody)
                 
             else:
+                g_retry = 0
                 print("Tesla-Timer: " + current_time + " Our windows are closed")
+        elif g_retry != 0: # If we got an error when trying to close the windows, wait 10 iteration cycles and try again
+            g_retry = g_retry + 1
     else:
         g_night = False
         print("Tesla-Timer: " + current_time + " Debug: Still daytime with diff of " + str(today_ss - now_tz))
@@ -431,7 +441,6 @@ def on_timer():
                     print("Tesla-Timer: " + current_time + " Debug: Windows are opened")
                 
                 #print(json.dumps(response.json(), indent = 4))
-                g_owm_raining = False # We assume it's not raining
                 icon = data['weather'][0]['icon']
                 if int(icon[0:2]) < 4: # Icon with a number lower than 4 means there is some sun showing
                     if today_sr + timedelta(hours=3) < now_tz < today_ss - timedelta(hours=3): # Sun is up high enough in the sky
@@ -498,6 +507,7 @@ g_timer_ran = True
 g_night = False
 g_out_temp = None
 g_already_sent_email_after_error = False
+g_retry = 0
 
 # These are our Tesla data we need to keep while we're running
 g_windows = None
