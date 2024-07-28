@@ -132,7 +132,7 @@ def raining_check_windows(rain):
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
 
-            emailBody = "Error #" + response.status_code + " getting vehicle data for VIN " + vin
+            emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
 
             sender = Emailer()
             emailSubject = "Tesla-CheckRain: " + emailBody
@@ -311,7 +311,7 @@ def on_timer():
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
 
-            emailBody = "Error #" + response.status_code + " getting vehicle data for VIN " + vin
+            emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
 
             sender = Emailer()
             emailSubject = "Tesla-Timer: " + emailBody
