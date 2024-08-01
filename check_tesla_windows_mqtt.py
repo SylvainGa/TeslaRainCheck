@@ -95,9 +95,11 @@ def on_mqtt_message(client, userdata, msg):
     else:
         rain = 0.0
 
-    if (g_debug & 3) > 0:
+    if (g_debug & 3) > 2:
         print("Tesla-MQTT: " + current_time + ": " + "{:.1f}".format(rain) + " cm")
-        
+    elif (g_debug & 3) > 1 and rain > 0.0:
+        print("Tesla-MQTT: " + current_time + ": " + "{:.1f}".format(rain) + " cm")
+
     if rain > 0.0:
         if g_mqtt_raining == False and g_owm_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
             g_mqtt_raining = True 
@@ -222,7 +224,10 @@ def raining_check_windows(rain):
             result = response.json().get("result")
             woke = response.json().get("woke")
             if result == True:
-                emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
+                if rain < 0.0:
+                    emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
+                else:
+                    emailBody = "Our windows are opened and it's raining according to the closest OWM station! Closing them"
             else:
                 emailBody = "It's raining and we're unable to close the windows! Check vehicle!"
         else:
@@ -326,6 +331,7 @@ def on_timer():
     global g_already_sent_email_after_error
     global g_kill_prog
     global g_retry
+    global g_debug
     
     now = datetime.now()
     g_timer_lastRun = now
@@ -469,9 +475,15 @@ def on_timer():
     # Also check if raining according to OWM and close the windows if they are opened (location based on car's position), no matter the time of day
     if owm_key is not None:
         URL = "https://api.openweathermap.org/data/2.5/weather?lat=" + str(latitude) + "&lon=" + str(longitude) + "&appid=" + str(owm_key)
+        if g_debug & 0x100:
+            print("OWM URL = " + URL)
+
         response = requests.get(URL)
         if response.status_code == 200:
+            if g_debug & 0x200:
+                print(json.dumps(response.json(), indent = 4))
             data = response.json()
+
             # Favor the car temperature
             if vehicle_status == "awake":
                 g_out_temp = climate_state['outside_temp']
@@ -487,8 +499,6 @@ def on_timer():
                 if (g_debug & 3) > 0:
                     print("Tesla-Timer: " + current_time + " Debug: Windows are opened")
             
-            if g_debug & 0x100:
-                print(json.dumps(response.json(), indent = 4))
             icon = data['weather'][0]['icon']
             if int(icon[0:2]) < 4 and str(icon[2:3]) == "d": # Icon with a number lower than 4 means there is some sun showing and 'd' means it's daytime
                 if today_sr + timedelta(hours=3) < now_tz < today_ss - timedelta(hours=3): # Sun is up high enough in the sky
@@ -549,6 +559,9 @@ sendTo = Config.get('Email', 'to')
 station_latitude = float(Config.get('MQTT', 'latitude'))
 station_longitude = float(Config.get('MQTT', 'longitude'))
 
+g_debug = int(Config.get('Debug', 'Debug_level'))
+print("Tesla: Debug level is " + str(g_debug))
+
 max_distance = float(Config.get('MQTT', 'max_distance'))
 if Config.has_option('OWM', 'api_key'):
     print("Tesla: Will use OWM")
@@ -565,7 +578,6 @@ g_night = False
 g_out_temp = None
 g_already_sent_email_after_error = False
 g_retry = 0
-g_debug = 0
 
 # These are our Tesla data we need to keep while we're running
 g_windows = None
@@ -611,11 +623,8 @@ elif vehicle_status == "awake":
 else:
     print("Vehicle " + vin + " returned a status of " + vehicle_status)
 
-print("Running first instace of the timer thread")
+print("Running first instance of the timer thread")
 on_timer()
-
-g_debug = int(Config.get('Debug', 'Debug_level'))
-print("Tesla: Debug level is " + str(g_debug))
 
 t_sec = int(Config.get('Timers', 'Timer'))
 print("Tesla: Starting timer thread with an interval of " + str(t_sec) + " seconds")
