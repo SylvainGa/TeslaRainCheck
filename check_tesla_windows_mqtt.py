@@ -164,7 +164,6 @@ def raining_check_windows(rain):
             emailSubject = "Tesla-CheckRain: " + emailBody
             sender.sendmail(sendTo, emailSubject, emailBody)
 
-            print(emailSubject)
             print("Tesla-CheckRain: " + emailBody)
 
         return;
@@ -184,7 +183,6 @@ def raining_check_windows(rain):
             emailSubject = "Tesla-CheckRain: " + emailBody
             sender.sendmail(sendTo, emailSubject, emailBody)
 
-            print(emailSubject)
             print("Tesla-CheckRain: " + emailBody)
 
         return;
@@ -274,6 +272,7 @@ def on_watchdog():
     global g_mqtt_ran
     global g_timer_ran
     global g_kill_prog
+    global g_wd_timer
 
     now = datetime.now()
     current_time = now.strftime("%H:%M:%S")
@@ -299,15 +298,15 @@ def on_watchdog():
 
                 quit(1) # Quit so systemctl respawn the process because 60 seconds without data from the station isn't normal. Not elegant but does the work
 
-    # If our last timer run plus 90 seconds is less than now, the timer hasn't ran for too long
-    if g_timer_lastRun + timedelta(seconds = 90) < now:
+    # If our last timer run plus in the time it takes to run the wd timer is less than now, the timer hasn't ran for too long
+    if g_timer_lastRun + timedelta(seconds = g_wd_timer) < now:
         if g_timer_ran == True:
             g_timer_ran = False
 
             emailBody = "Last ran at " + g_timer_lastRun.strftime("%H:%M:%S")
 
             sender = Emailer()
-            emailSubject = "Tesla-WD: Timer thread hasn't ran in over 1.5 minutes, quitting program"
+            emailSubject = "Tesla-WD: Timer thread hasn't ran in over " + g_wd_timer + " secondes, quitting program"
             sender.sendmail(sendTo, emailSubject, emailBody)
 
             print(emailSubject)
@@ -332,11 +331,36 @@ def on_timer():
     global g_kill_prog
     global g_retry
     global g_debug
+    global g_in_timer
     
     now = datetime.now()
     g_timer_lastRun = now
     g_timer_ran = True
 
+    g_in_timer += 1
+    
+    if g_in_timer == 2:
+        print("Tesla-Timer: " + current_time + " - Timer thread already running, skipping this iteration")
+        return
+    
+    if g_in_timer == 3:
+        g_kill_prog = True;
+
+        if g_already_sent_email_after_error == False:
+            g_already_sent_email_after_error = True
+
+            emailBody = "Timer thread already running FOR TWO ITERARIONS! We must be hung, quiting"
+
+            sender = Emailer()
+            emailSubject = "Tesla-Timer: " + emailBody
+            sender.sendmail(sendTo, emailSubject, emailBody)
+
+            print("Tesla-Timer: " + current_time + " - " + emailBody)
+
+            quit(1) # Quit so systemctl respawn the process because we were asked to quit. Not elegant but does the work
+
+        return
+    
     current_time = now.strftime("%H:%M:%S")
 
     if g_kill_prog == True:
@@ -362,6 +386,7 @@ def on_timer():
                 print(emailSubject)
                 print("Tesla-Timer: " + current_time + " - " + emailBody)
 
+        g_in_timer = 0
         return;
     
     vehicle_state = response.json().get("vehicle_state")
@@ -379,9 +404,9 @@ def on_timer():
             emailSubject = "Tesla-Timer: " + emailBody
             sender.sendmail(sendTo, emailSubject, emailBody)
 
-            print(emailSubject)
             print("Tesla-Timer: " + current_time + " - " + emailBody)
 
+        g_in_timer = 0
         return;
 
     g_already_sent_email_after_error = False; 
@@ -390,6 +415,7 @@ def on_timer():
     if g_moving is not None and g_moving != "P":
         if (g_debug & 3) > 0:
             print("Tesla-Timer: " + current_time + " - Vehicle in motion, skipping checking inside temperature and windows")
+            g_in_timer = 0
             return
 
     fd_window = int(vehicle_state['fd_window'])
@@ -544,6 +570,8 @@ def on_timer():
     else:
         print("Tesla-Timer: " + current_time + " Debug: No OWM token")
 
+    g_in_timer = 0
+
 ####### Start here
 
 # Read our config
@@ -578,6 +606,7 @@ g_night = False
 g_out_temp = None
 g_already_sent_email_after_error = False
 g_retry = 0
+g_in_timer = 0
 
 # These are our Tesla data we need to keep while we're running
 g_windows = None
@@ -631,9 +660,9 @@ print("Tesla: Starting timer thread with an interval of " + str(t_sec) + " secon
 T = RepeatTimer(t_sec, on_timer)
 T.start()
 
-t_sec = int(Config.get('Timers', 'WatchDog'))
-print("Tesla: Starting watchdog thread with an interval of " + str(t_sec) + " seconds")
-W = RepeatTimer(t_sec, on_watchdog)
+g_wd_timer = int(Config.get('Timers', 'WatchDog'))
+print("Tesla: Starting watchdog thread with an interval of " + str(g_wd_timer) + " seconds")
+W = RepeatTimer(g_wd_timer, on_watchdog)
 W.start()
 
 if g_skip_mqtt:
