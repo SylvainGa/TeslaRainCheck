@@ -96,9 +96,9 @@ def on_mqtt_message(client, userdata, msg):
         rain = 0.0
 
     if (g_debug & 3) > 2:
-        print("Tesla-MQTT: " + current_time + ": " + "{:.1f}".format(rain) + " cm")
+        print("Tesla-MQTT: " + current_time + ": " + "{:.4f}".format(rain) + " cm")
     elif (g_debug & 3) > 1 and rain > 0.0:
-        print("Tesla-MQTT: " + current_time + ": " + "{:.1f}".format(rain) + " cm")
+        print("Tesla-MQTT: " + current_time + ": " + "{:.4f}".format(rain) + " cm")
 
     if rain > 0.0:
         if g_mqtt_raining == False and g_owm_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
@@ -525,6 +525,12 @@ def on_timer():
                 if (g_debug & 3) > 0:
                     print("Tesla-Timer: " + current_time + " Debug: Windows are opened")
             
+            if vehicle_status == "awake":
+                if g_debug & 0x800:
+                    print("Tesla-Timer: " + current_time + " Debug: Climate is " + json.dumps(climate_data, indent = 4))
+                inside_temp = climate_state['inside_temp']
+                active_cooling =  climate_state['cabin_overheat_protection_actively_cooling']
+
             icon = data['weather'][0]['icon']
             if int(icon[0:2]) < 4 and str(icon[2:3]) == "d": # Icon with a number lower than 4 means there is some sun showing and 'd' means it's daytime
                 if today_sr + timedelta(hours=3) < now_tz < today_ss - timedelta(hours=3): # Sun is up high enough in the sky
@@ -532,15 +538,10 @@ def on_timer():
                         # Before we go any further, we must make sure the battery level is at least 20% to prevent running down the battery too much
                         soc = charge_state['battery_level']
                         if soc is not None and soc >= 20:
-                            #vehicles[vehicle].sync_wake_up()  # Keep the vehicle awake so cabin overheat protection can do its stuff if needed <- Only works for 12 hours after a drive, not when awaken :-(
                             if vehicle_status == "awake":
-                                if g_debug & 0x800:
-                                    print("Tesla-Timer: " + current_time + " Debug: Climate is " + json.dumps(climate_data, indent = 4))
-                                inside_temp = climate_state['inside_temp']
-                                active_cooling =  climate_state['cabin_overheat_protection_actively_cooling']
-                                if (g_debug & 3) > 2:
-                                    print("Tesla-Timer: " + current_time + " Debug: Fan is running: " + str(active_cooling)) 
-                                    print("Tesla-Timer: " + current_time + " Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C with inside at " + "{:.1f}".format(inside_temp) + "C - The vehicle is awake!")
+                                #vehicles[vehicle].sync_wake_up()  # Keep the vehicle awake so cabin overheat protection can do its stuff if needed <- Only works for 12 hours after a drive, not when awaken :-(
+                                print("Tesla-Timer: " + current_time + " Debug: Fan is running: " + str(active_cooling)) 
+                                print("Tesla-Timer: " + current_time + " Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C with inside at " + "{:.1f}".format(inside_temp) + "C - The vehicle is awake!")
                             else:
                                 if (g_debug & 3) > 1:
                                     print("Tesla-Timer: " + current_time + " Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C - Vehicle is asleep so can't get its inside temperature")
@@ -552,7 +553,10 @@ def on_timer():
                             print("Tesla-Timer: " + current_time + " Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is cold at " + "{:.1f}".format(g_out_temp) + "C")
                 else:
                     if (g_debug & 3) > 1:
-                        print("Tesla-Timer: " + current_time + " Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") but too early or late to be warm enough in the car")
+                        if vehicle_status == "awake":
+                            print("Tesla-Timer: " + current_time + " Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") but too early or late to be warm enough in the car. Inside temperature is " + "{:.1f}".format(inside_temp) + "C" + "{:.1f}".format(inside_temp) + "C - The vehicle is awake!")
+                        else:
+                            print("Tesla-Timer: " + current_time + " Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") but too early or late to be warm enough in the car - The vehicle is sleeping")
             else: # It's not a clear sky or it's night
                 if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 11: # But is it raining? 9: Shower rain, 10: Rain, 11: Thunderstorm
                     if g_mqtt_raining == False and g_owm_raining == False: # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
@@ -563,7 +567,11 @@ def on_timer():
                             print("Tesla-Timer: " + current_time + " Skipping, waiting for the rain to stop")
 
                 if (g_debug & 3) > 1:
-                    print("Tesla-Timer: " + current_time + " Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ")")
+                    if vehicle_status == "awake":
+                        if (g_debug & 3) > 2:
+                            print("Tesla-Timer: " + current_time + " Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ") during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C with inside at " + "{:.1f}".format(inside_temp) + "C - The vehicle is awake!")
+                    else:
+                        print("Tesla-Timer: " + current_time + " Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ") - The vehicle is sleeping")
         else:
             if (g_debug & 3) > 1:
                 print("Tesla-Timer: " + current_time + " Debug: OWN returned " + str(response.status_code))
