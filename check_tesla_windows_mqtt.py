@@ -103,7 +103,7 @@ def on_mqtt_message(client, userdata, msg):
     if rain > 0.0:
         if g_mqtt_raining == False and g_owm_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
             g_mqtt_raining = True 
-            raining_check_windows(rain) # It's raining according to MQTT, let's check our windows (and OWM hasn't seen rain yet)
+            raining_check_windows(rain, "") # It's raining according to MQTT, let's check our windows (and OWM hasn't seen rain yet)
         else:
             if (g_debug & 3) > 0:
                 print("Tesla-MQTT: Skipping, waiting for the rain to stop")
@@ -140,7 +140,7 @@ def get_vehicle_status():
     else:
         return str(response.status_code)
         
-def raining_check_windows(rain):
+def raining_check_windows(rain, owm_station):
     global g_windows
     global g_moving
     global g_longitude
@@ -223,16 +223,16 @@ def raining_check_windows(rain):
             woke = response.json().get("woke")
             if result == True:
                 if rain < 0.0:
-                    emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
+                    emailBody = "Our windows are opened and it's raining according to the closest OWM station (" + owm_station + ")! Closing them"
                 else:
-                    emailBody = "Our windows are opened and it's raining according to the closest OWM station! Closing them"
+                    emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
             else:
                 emailBody = "It's raining and we're unable to close the windows! Check vehicle!"
         else:
             emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
 
         if rain < 0.0:
-            emailSubject = "Tesla-CheckRain: It has rained according to OWM at " + current_time
+            emailSubject = "Tesla-CheckRain: It has rained according to OWM station '" + owm_station + "' at " + current_time
         else:
             emailSubject = "Tesla-CheckRain: It has rained " + str(rain) + " cm at " + current_time
         sender = Emailer()
@@ -518,7 +518,7 @@ def on_timer():
             elif "temp" in data['main']:
                 g_out_temp = float(data['main']['temp']) - 273.15
                 if (g_debug & 3) > 1:
-                    print("Tesla-Timer: " + current_time + " Debug: Outside temperature according to OWM is " + "{:.1f}".format(g_out_temp) + "C")
+                    print("Tesla-Timer: " + current_time + " Debug: Outside temperature according to OWM station '" + data['name'] + "' is " + "{:.1f}".format(g_out_temp) + "C")
             else:
                 g_out_temp = None
             if g_windows is not None and g_windows > 0:
@@ -561,7 +561,7 @@ def on_timer():
                 if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 11: # But is it raining? 9: Shower rain, 10: Rain, 11: Thunderstorm
                     if g_mqtt_raining == False and g_owm_raining == False: # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
                         g_owm_raining = True # It's raining according to OWM, let's check our windows (and MQTT hasn't seen rain yet)
-                        raining_check_windows(-1.0)
+                        raining_check_windows(-1.0, data['name'])
                     else:
                         if (g_debug & 3) > 0:
                             print("Tesla-Timer: " + current_time + " Skipping, waiting for the rain to stop")
