@@ -18,6 +18,7 @@ import asyncio
 # 0 No debug
 # 1 Generic debug
 # 2 Verbose debug
+# 3 Same as 2 but log a line even in no rain is detected by MQTT
 
 #      12345678 12345678 12345678
 # Lvl  XX (0-3)
@@ -306,7 +307,7 @@ def on_watchdog():
             emailBody = "Last ran at " + g_timer_lastRun.strftime("%H:%M:%S")
 
             sender = Emailer()
-            emailSubject = "Tesla-WD: Timer thread hasn't ran in over " + g_wd_timer + " secondes, quitting program"
+            emailSubject = "Tesla-WD: Timer thread hasn't ran in over " + str(g_wd_timer) + " secondes, quitting program"
             sender.sendmail(sendTo, emailSubject, emailBody)
 
             print(emailSubject)
@@ -583,7 +584,7 @@ def on_timer():
                             else:
                                 print("Tesla-Timer: " + current_time + " Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ") according to OWM station '" + data['name'] + "' during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C and unable to read the inside temperature - The vehicle is awake!")
                     else:
-                        print("Tesla-Timer: " + current_time + " Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ") - The vehicle is sleeping")
+                        print("Tesla-Timer: " + current_time + " Debug: Sun shouldn't be visible with " + data['weather'][0]['description'] + " (" + str(icon) + ") according to OWM station '" + data['name'] + "' - The vehicle is sleeping")
         else:
             if (g_debug & 3) > 1:
                 print("Tesla-Timer: " + current_time + " Debug: OWN returned " + str(response.status_code))
