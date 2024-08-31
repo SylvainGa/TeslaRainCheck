@@ -372,7 +372,29 @@ def on_timer():
     vehicle_status = get_vehicle_status()
 
     # Read data that I need from the vehicle
-    response = tessie("state", "")
+    try:
+        response = tessie("state", "")
+    except Exception as error:
+        if g_already_sent_email_after_error == False:
+            g_already_sent_email_after_error = True
+
+            emailBody = "Tessie command failed with exception: " + error
+            emailSubject = "Tesla-Timer: Tessie command failed with exception: " + type(error).__name__
+
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except:
+                if (g_debug & 3) > 0:
+                    print("Tesla-Timer: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
+
+            if (g_debug & 3) > 0:
+                print(emailSubject)
+                print("Tesla-Timer: " + current_time + " - " + emailBody)
+
+        g_in_timer = 0
+        return
+
     if response.status_code != 200:
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
