@@ -11,7 +11,7 @@ import smtplib
 import configparser
 import geopy.distance
 import paho.mqtt.client as mqtt
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 import asyncio 
 
 # DEBUG flag
@@ -104,7 +104,13 @@ def on_mqtt_message(client, userdata, msg):
     if rain > 0.0:
         if g_mqtt_raining == False and g_owm_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
             g_mqtt_raining = True 
+            now1 = datetime.now()
+            current_time1 = now1.strftime("%H:%M:%S")
+            print("Tesla-MQTT: " + current_time1 + " Calling raining_check_windows")
             raining_check_windows(rain, "") # It's raining according to MQTT, let's check our windows (and OWM hasn't seen rain yet)
+            now2 = datetime.now()
+            current_time2 = now2.strftime("%H:%M:%S")
+            print("Tesla-MQTT: " + current_time2 + " Returning from raining_check_windows")
         else:
             if (g_debug & 3) > 0:
                 print("Tesla-MQTT: Skipping, waiting for the rain to stop")
@@ -123,7 +129,33 @@ def tessie(command, extra):
     if g_debug & 0x20:
         print("url=" + url)
         print(json.dumps(headers, indent = 4))
-    response = requests.get(url, headers=headers)
+
+    try:
+        response = requests.get(url, headers=headers)
+    except Exception as error:
+        # if g_already_sent_email_after_error == False:
+            # g_already_sent_email_after_error = True
+
+            # emailBody = "Tessie: command failed with exception: " + str(error)
+            # emailSubject = "Tessie: command failed with exception: " + type(error).__name__
+
+            # try:
+                # sender = Emailer()
+                # sender.sendmail(sendTo, emailSubject, emailBody)
+            # except Exception as error:
+                # if (g_debug & 3) > 0:
+                    # print("Tessie: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
+
+        if (g_debug & 3) > 0:
+            now = datetime.now()
+            current_time = now.strftime("%H:%M:%S")
+
+            print("Tessie: " + current_time + " - Command failed with exception: " + str(error))
+            # print(emailSubject)
+            # print("Te: " + current_time + " - " + emailBody)
+        response = requests.Response() # Build a new Response dict
+        response.status_code = -300        
+
     if g_debug & 0x40:
         print(response.status_code)
         print(response.json())
@@ -160,12 +192,16 @@ def raining_check_windows(rain, owm_station):
             g_already_sent_email_after_error = True
 
             emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
-
-            sender = Emailer()
             emailSubject = "Tesla-CheckRain: " + emailBody
-            sender.sendmail(sendTo, emailSubject, emailBody)
 
-            print("Tesla-CheckRain: " + emailBody)
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                if (g_debug & 3) > 0:
+                    print("raining_check_windows: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
+
+            print("Tesla-CheckRain: " + current_time + " - " + emailBody)
 
         return;
     
@@ -179,12 +215,16 @@ def raining_check_windows(rain, owm_station):
             g_already_sent_email_after_error = True
 
             emailBody = "Missing data reading vehicle state for VIN " + vin
-
-            sender = Emailer()
             emailSubject = "Tesla-CheckRain: " + emailBody
-            sender.sendmail(sendTo, emailSubject, emailBody)
 
-            print("Tesla-CheckRain: " + emailBody)
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                if (g_debug & 3) > 0:
+                    print("Tesla-CheckRain: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
+
+            print("Tesla-CheckRain: " + current_time + " - " + emailBody)
 
         return;
 
@@ -220,15 +260,21 @@ def raining_check_windows(rain, owm_station):
         if distance < max_distance or rain < 0.0: # If we're close to our station or OWM has seen rain (uses the vehicle's location), close the windows
             # This is where we close our windows
             response = tessie("command/close_windows", "?retry_duration=90")
-            result = response.json().get("result")
-            woke = response.json().get("woke")
-            if result == True:
-                if rain < 0.0:
-                    emailBody = "Our windows are opened and it's raining according to the closest OWM station (" + owm_station + ")! Closing them"
+            status_code = response.status_code
+            if status_code == 200:
+                result = response.json().get("result")
+                woke = response.json().get("woke")
+                if result == True:
+                    if rain < 0.0:
+                        emailBody = "Our windows are opened and it's raining according to the closest OWM station (" + owm_station + ")! Closing them"
+                    else:
+                        emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
                 else:
-                    emailBody = "We're parked close enough to our station with our windows opened in the rain! Closing them"
+                    emailBody = "It's raining and we're unable to close the windows! Check vehicle!"
             else:
-                emailBody = "It's raining and we're unable to close the windows! Check vehicle!"
+                emailBody = "It's raining and we're unable to close the windows! Status code was " + str(status_code) + " Check vehicle!"
+
+                emailSubject = "Tesla-Timer: " + emailBody
         else:
             emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
 
@@ -236,24 +282,29 @@ def raining_check_windows(rain, owm_station):
             emailSubject = "Tesla-CheckRain: It has rained according to OWM station '" + owm_station + "' at " + current_time
         else:
             emailSubject = "Tesla-CheckRain: It has rained " + str(rain) + " cm at " + current_time
-        sender = Emailer()
-        sender.sendmail(sendTo, emailSubject, emailBody)
+
+        try:
+            sender = Emailer()
+            sender.sendmail(sendTo, emailSubject, emailBody)
+        except Exception as error:
+            if (g_debug & 3) > 0:
+                print("Tesla-CheckRain: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
     
         print(emailSubject)
-        print("Tesla-CheckRain: " + emailBody)
+        print("Tesla-CheckRain: " + current_time + " - " + emailBody)
     else:
         if rain < 0.0:
             if (g_debug & 3) > 0:
                 if (g_moving is None or g_moving == "P"):
-                    print("Tesla-CheckRain: It has rained according to OWM at " + current_time + " and our windows are closed")
+                    print("Tesla-CheckRain: " + current_time + " - It has rained according to OWM and our windows are closed")
                 else:
-                    print("Tesla-CheckRain: It has rained according to OWM at " + current_time + " but the vehicle is moving")
+                    print("Tesla-CheckRain: " + current_time + " - It has rained according to OWM but the vehicle is moving")
         else:
             if (g_debug & 3) > 0:
                 if (g_moving is None or g_moving == "P"):
-                    print("Tesla-CheckRain: It has rained " + str(rain) + " cm at " + current_time + " and our windows are closed")
+                    print("Tesla-CheckRain: " + current_time + " - It has rained " + str(rain) + " cm and our windows are closed")
                 else:
-                    print("Tesla-CheckRain: It has rained " + str(rain) + " cm at " + current_time + " but the vehicle is moving")
+                    print("Tesla-CheckRain: " + current_time + " - It has rained " + str(rain) + " cm but the vehicle is moving")
 
     return
     
@@ -284,16 +335,20 @@ def on_watchdog():
         if (g_debug & 3) > 0:
             print("Tesla-WD: " + current_time + ": Last mqtt thread ran at " + g_mqtt_lastRun.strftime("%H:%M:%S") + " last timer thread ran at " + g_timer_lastRun.strftime("%H:%M:%S"))
 
-        # If our last mqtt data fetch plus 60 seconds is less than now, the mqtt hasn't received data for too long
-        if g_mqtt_lastRun + timedelta(seconds = 60) < now:
+        # If our last mqtt data fetch plus g_wd_mqtt_max seconds is less than now, the mqtt hasn't received data for too long
+        if g_mqtt_lastRun + timedelta(seconds = g_wd_mqtt_max) < now:
             if g_mqtt_ran == True:
                 g_mqtt_ran = False
 
                 emailBody = "Last ran at " + g_mqtt_lastRun.strftime("%H:%M:%S")
-
-                sender = Emailer()
                 emailSubject = "Tesla-WD: MQTT thread hasn't ran in over a minute, quitting program"
-                sender.sendmail(sendTo, emailSubject, emailBody)
+
+                try:
+                    sender = Emailer()
+                    sender.sendmail(sendTo, emailSubject, emailBody)
+                except Exception as error:
+                    if (g_debug & 3) > 0:
+                        print("Tesla-WD: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
 
                 print(emailSubject)
 
@@ -305,10 +360,14 @@ def on_watchdog():
             g_timer_ran = False
 
             emailBody = "Last ran at " + g_timer_lastRun.strftime("%H:%M:%S")
-
-            sender = Emailer()
             emailSubject = "Tesla-WD: Timer thread hasn't ran in over " + str(g_wd_timer) + " secondes, quitting program"
-            sender.sendmail(sendTo, emailSubject, emailBody)
+
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                if (g_debug & 3) > 0:
+                    print("Tesla-WD: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
 
             print(emailSubject)
             print("Tesla-WD: " + current_time + " - " + emailBody)
@@ -351,10 +410,14 @@ def on_timer():
             g_already_sent_email_after_error = True
 
             emailBody = "Timer thread already running FOR TWO ITERARIONS! We must be hung, quiting"
-
-            sender = Emailer()
             emailSubject = "Tesla-Timer: " + emailBody
-            sender.sendmail(sendTo, emailSubject, emailBody)
+
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                if (g_debug & 3) > 0:
+                    print("Tesla-Timer: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
 
             print("Tesla-Timer: " + current_time + " - " + emailBody)
 
@@ -372,38 +435,20 @@ def on_timer():
     vehicle_status = get_vehicle_status()
 
     # Read data that I need from the vehicle
-    try:
-        response = tessie("state", "")
-    except Exception as error:
-        if g_already_sent_email_after_error == False:
-            g_already_sent_email_after_error = True
-
-            emailBody = "Tessie command failed with exception: " + error
-            emailSubject = "Tesla-Timer: Tessie command failed with exception: " + type(error).__name__
-
-            try:
-                sender = Emailer()
-                sender.sendmail(sendTo, emailSubject, emailBody)
-            except:
-                if (g_debug & 3) > 0:
-                    print("Tesla-Timer: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
-
-            if (g_debug & 3) > 0:
-                print(emailSubject)
-                print("Tesla-Timer: " + current_time + " - " + emailBody)
-
-        g_in_timer = 0
-        return
-
+    response = tessie("state", "")
     if response.status_code != 200:
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
 
             emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
-
-            sender = Emailer()
             emailSubject = "Tesla-Timer: " + emailBody
-            sender.sendmail(sendTo, emailSubject, emailBody)
+
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                if (g_debug & 3) > 0:
+                    print("Tesla-Timer: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
 
             if (g_debug & 3) > 0:
                 print(emailSubject)
@@ -422,10 +467,14 @@ def on_timer():
             g_already_sent_email_after_error = True
 
             emailBody = "Missing data reading vehicle state for VIN " + vin
-
-            sender = Emailer()
             emailSubject = "Tesla-Timer: " + emailBody
-            sender.sendmail(sendTo, emailSubject, emailBody)
+
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                if (g_debug & 3) > 0:
+                    print("Tesla-Timer: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
 
             print("Tesla-Timer: " + current_time + " - " + emailBody)
 
@@ -478,6 +527,8 @@ def on_timer():
         if (g_debug & 3) > 1:
             print("Tesla-Timer: " + current_time + " Debug: " + current_time + " is night")
         if g_night == False or g_retry == 10:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
+            if g_retry == 10: # If we got here because we timed out, reset it back to 0
+                g_retry = 0
             g_night = True
             if (g_debug & 3) > 0:
                 print("Tesla-Timer: " + current_time + " It's night, check if our windows are closed")
@@ -504,8 +555,12 @@ def on_timer():
 
                     emailSubject = "Tesla-Timer: " + emailBody
                 
-                sender = Emailer()
-                sender.sendmail(sendTo, emailSubject, emailBody)
+                try:
+                    sender = Emailer()
+                    sender.sendmail(sendTo, emailSubject, emailBody)
+                except Exception as error:
+                    if (g_debug & 3) > 0:
+                        print("Tesla-Timer: " + current_time + " - Unable to send email because of exception: " + type(error).__name__ + ")")
 
                 print(emailSubject)
                 
@@ -593,7 +648,13 @@ def on_timer():
                 if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 11: # But is it raining? 9: Shower rain, 10: Rain, 11: Thunderstorm
                     if g_mqtt_raining == False and g_owm_raining == False: # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
                         g_owm_raining = True # It's raining according to OWM, let's check our windows (and MQTT hasn't seen rain yet)
+                        now1 = datetime.now()
+                        current_time1 = now1.strftime("%H:%M:%S")
+                        print("Tesla-Timer: " + current_time1 + " Calling raining_check_windows")
                         raining_check_windows(-1.0, data['name'])
+                        now2 = datetime.now()
+                        current_time2 = now2.strftime("%H:%M:%S")
+                        print("Tesla-Timer: " + current_time2 + " Returning from raining_check_windows")
                     else:
                         if (g_debug & 3) > 0:
                             print("Tesla-Timer: " + current_time + " Skipping, waiting for the rain to stop")
@@ -703,8 +764,12 @@ print("Tesla: Starting timer thread with an interval of " + str(t_sec) + " secon
 T = RepeatTimer(t_sec, on_timer)
 T.start()
 
+print("Tesla: Waiting 30 seconds before starting watchdog thread")
+time.sleep(30)
+
 g_wd_timer = int(Config.get('Timers', 'WatchDog'))
-print("Tesla: Starting watchdog thread with an interval of " + str(g_wd_timer) + " seconds")
+g_wd_mqtt_max = int(Config.get('Timers', 'MQTT_Max'))
+print("Tesla: Starting watchdog thread with an interval of " + str(g_wd_timer) + " seconds and max time between MQTT event is " + str(g_wd_mqtt_max))
 W = RepeatTimer(g_wd_timer, on_watchdog)
 W.start()
 
