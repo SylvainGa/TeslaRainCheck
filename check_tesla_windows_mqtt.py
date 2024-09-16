@@ -100,16 +100,18 @@ def on_mqtt_message(client, userdata, msg):
         rain = 0.0
 
     if (g_debug & 3) > 2:
-        printWithTime("Tesla-MQTT: {:.4f}".format(rain) + " cm")
+        printWithTime("Tesla-MQTT: Debug: {:.4f}".format(rain) + " cm")
     elif (g_debug & 3) > 1 and rain > 0.0:
-        printWithTime("Tesla-MQTT: {:.4f}".format(rain) + " cm")
+        printWithTime("Tesla-MQTT: Debug: {:.4f}".format(rain) + " cm")
 
     if rain > 0.0:
         if g_mqtt_raining == False and g_owm_raining == False:    # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
             g_mqtt_raining = True 
-            printWithTime("Tesla-MQTT: Calling raining_check_windows")
+            if (g_debug & 3) > 1:
+                printWithTime("Tesla-MQTT: Debug: Calling raining_check_windows")
             raining_check_windows(rain, "") # It's raining according to MQTT, let's check our windows (and OWM hasn't seen rain yet)
-            printWithTime("Tesla-MQTT: Returning from raining_check_windows")
+            if (g_debug & 3) > 1:
+                printWithTime("Tesla-MQTT: Debug: Returning from raining_check_windows")
         else:
             if (g_debug & 3) > 0:
                 printWithTime("Tesla-MQTT: Skipping, waiting for the rain to stop")
@@ -118,7 +120,9 @@ def on_mqtt_message(client, userdata, msg):
         if g_debug & 4:
             printWithTime("Tesla-MQTT Debug: All is fine")
 
-def tessie(command, extra):
+def tessie(command, extra, timeout):
+    global g_t_sec
+    
     url = "https://api.tessie.com/" + vin + "/" + command + extra
     headers = {
         "accept": "application/json",
@@ -130,7 +134,7 @@ def tessie(command, extra):
         printWithTime(json.dumps(headers, indent = 4))
 
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=timeout)
     except Exception as error:
         # if g_already_sent_email_after_error == False:
             # g_already_sent_email_after_error = True
@@ -143,10 +147,10 @@ def tessie(command, extra):
                 # sender.sendmail(sendTo, emailSubject, emailBody)
             # except Exception as error:
                 # if (g_debug & 3) > 0:
-                    # printWithTime("Tessie: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    # printWithTime("Tesla-Tessie: Unable to send email because of exception: " + type(error).__name__ + ")")
 
         if (g_debug & 3) > 0:
-            printWithTime("Tessie: Command failed with exception: " + str(error))
+            printWithTime("Tesla-Tessie: Command failed with exception: " + str(error))
             # printWithTime(emailSubject)
             # printWithTime("Te: " + emailBody)
         response = requests.Response() # Build a new Response dict
@@ -159,7 +163,7 @@ def tessie(command, extra):
     return response
 
 def get_vehicle_status():
-    response = tessie("status", "")
+    response = tessie("status", "", g_t_sec)
     if g_debug & 0x80:
         printWithTime(response.status_code)
         printWithTime(response.json())
@@ -174,12 +178,13 @@ def raining_check_windows(rain, owm_station):
     global g_moving
     global g_longitude
     global g_latitude
-
+    global g_wd_timer
+    
     # Get the state of the vehicle first
     vehicle_status = get_vehicle_status()
 
     # Read data that I need from the vehicle
-    response = tessie("state", "")
+    response = tessie("state", "?use_cache=true", g_t_sec)
     if response.status_code != 200:
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
@@ -192,7 +197,10 @@ def raining_check_windows(rain, owm_station):
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
                 if (g_debug & 3) > 0:
-                    printWithTime("raining_check_windows: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    if rain < 0.0:
+                        printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    else:
+                        printWithTime("Tesla-MQTT: Unable to send email because of exception: " + type(error).__name__ + ")")
 
             printWithTime("Tesla-CheckRain: " + emailBody)
 
@@ -236,7 +244,7 @@ def raining_check_windows(rain, owm_station):
     
     if g_latitude == None or g_longitude == None:
         if (g_debug & 3) > 2:
-            printWithTime("Missing Latitude or Longitude, assuming we're at our station")
+            printWithTime("Tesla-CheckRain: Debug: Missing Latitude or Longitude, assuming we're at our station")
         latitude = station_latitude
         longitude = station_longitude
     else:
@@ -252,7 +260,10 @@ def raining_check_windows(rain, owm_station):
 
         if distance < max_distance or rain < 0.0: # If we're close to our station or OWM has seen rain (uses the vehicle's location), close the windows
             # This is where we close our windows
-            response = tessie("command/close_windows", "?retry_duration=90")
+            waitTime = g_wd_timer - 5
+            if waitTime > 90:
+                waitTime = 90
+            response = tessie("command/close_windows", "?retry_duration=" + str(waitTime), waitTime)
             status_code = response.status_code
             if status_code == 200:
                 result = response.json().get("result")
@@ -267,7 +278,10 @@ def raining_check_windows(rain, owm_station):
             else:
                 emailBody = "It's raining and we're unable to close the windows! Status code was " + str(status_code) + " Check vehicle!"
 
-                emailSubject = "Tesla-Timer: " + emailBody
+                if rain < 0.0:
+                    emailSubject = "Tesla-Timer: " + emailBody
+                else:
+                    emailSubject = "Tesla-MQTT: " + emailBody
         else:
             emailBody = "We're parked with our windows opened in the rain but too far (" + "%.1f" % distance + " km) to be sure it's raining on us, so leaving as is"
 
@@ -386,13 +400,18 @@ def on_timer():
     global g_retry
     global g_debug
     global g_in_timer
+    global g_wd_timer
+    
+    printWithTime("Tesla-Timer: ****************************************************")
     
     now = datetime.now()
     g_timer_lastRun = now
     g_timer_ran = True
+    
+    if (g_debug & 3) > 1:
+        printWithTime("Tesla-Timer: Debug: Setting g_timer_lastRun to " + g_timer_lastRun.strftime("%H:%M:%S"))
 
     g_in_timer += 1
-    
     if g_in_timer == 2:
         printWithTime("Tesla-Timer: Timer thread already running, skipping this iteration")
         return
@@ -410,8 +429,7 @@ def on_timer():
                 sender = Emailer()
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
-                if (g_debug & 3) > 0:
-                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
 
             printWithTime("Tesla-Timer: " + emailBody)
 
@@ -427,7 +445,9 @@ def on_timer():
     vehicle_status = get_vehicle_status()
 
     # Read data that I need from the vehicle
-    response = tessie("state", "")
+    printWithTime("Tesla-Timer: Timer Hang Debug: Querying Tessie")
+    
+    response = tessie("state", "?use_cache=true", g_t_sec)
     if response.status_code != 200:
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
@@ -439,8 +459,7 @@ def on_timer():
                 sender = Emailer()
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
-                if (g_debug & 3) > 0:
-                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
 
             if (g_debug & 3) > 0:
                 printWithTime(emailSubject)
@@ -449,6 +468,8 @@ def on_timer():
         g_in_timer = 0
         return;
     
+    printWithTime("Tesla-Timer: Timer Hang Debug: Tessie queried, getting vehicle parameters")
+
     vehicle_state = response.json().get("vehicle_state")
     climate_state = response.json().get("climate_state")
     charge_state  = response.json().get("charge_state")
@@ -465,8 +486,7 @@ def on_timer():
                 sender = Emailer()
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
-                if (g_debug & 3) > 0:
-                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
 
             printWithTime("Tesla-Timer: " + emailBody)
 
@@ -492,14 +512,16 @@ def on_timer():
     g_longitude = drive_state['longitude']
     
     if g_latitude == None or g_longitude == None:
-        if (g_debug & 3) > 0:
-            printWithTime("Missing Latitude or Longitude, assuming we're at our station")
+        if (g_debug & 3) > 1:
+            printWithTime("Tesla-Timer: Debug: Missing Latitude or Longitude, assuming we're at our station")
         latitude = station_latitude
         longitude = station_longitude
     else:
         latitude = g_latitude
         longitude = g_longitude
     
+    printWithTime("Tesla-Timer: Timer Hang Debug: Finish building vehicle parameters, querying sun")
+
     # Check if the sun has set and if our windows are still opened
     sun = Sun(latitude, longitude)
     today_sr = sun.get_sunrise_time()
@@ -515,7 +537,11 @@ def on_timer():
 
     g_owm_raining = False # We assume it's not raining
 
+    printWithTime("Tesla-Timer: Timer Hang Debug: Sun queried, analysing results")
+
     if today_sr > now_tz or now_tz > today_ss:
+        printWithTime("Tesla-Timer: Timer Hang Debug: Doing night stuff")
+
         if (g_debug & 3) > 1:
             printWithTime("Tesla-Timer: Debug: Night")
         if g_night == False or g_retry == 10:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
@@ -525,7 +551,10 @@ def on_timer():
             if (g_debug & 3) > 0:
                 printWithTime("Tesla-Timer: It's night, check if our windows are closed")
             if g_windows is not None and g_windows > 0:
-                response = tessie("command/close_windows", "?retry_duration=90")
+                waitTime = g_wd_timer - 5
+                if waitTime > 90:
+                    waitTime = 90
+                response = tessie("command/close_windows", "?retry_duration=" + str(waitTime), waitTime)
                 status_code = response.status_code
                 if status_code == 200:
                     
@@ -553,8 +582,7 @@ def on_timer():
                     sender = Emailer()
                     sender.sendmail(sendTo, emailSubject, emailBody)
                 except Exception as error:
-                    if (g_debug & 3) > 0:
-                        printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
 
                 printWithTime(emailSubject)
                 
@@ -565,18 +593,22 @@ def on_timer():
         elif g_retry != 0: # If we got an error when trying to close the windows, wait 10 iteration cycles and try again
             g_retry = g_retry + 1
     else:
+        printWithTime("Tesla-Timer: Timer Hang Debug: Doing day stuff")
         g_night = False
-        if (g_debug & 3) > 0:
+        if (g_debug & 3) > 1:
             printWithTime("Tesla-Timer: Debug: Still daytime with diff of " + str(today_ss - now_tz))
 
     # Check if it's during the hottest part of the day, it's warm outside and the sun might be out - All conditions to have a warm inside. If set, keep the vehicle awake so cabin protection can do its stuff
     # Also check if raining according to OWM and close the windows if they are opened (location based on car's position), no matter the time of day
+    printWithTime("Tesla-Timer: Timer Hang Debug: Doing OWM stuff")
+
     if owm_key is not None:
         URL = "https://api.openweathermap.org/data/2.5/weather?lat=" + str(latitude) + "&lon=" + str(longitude) + "&appid=" + str(owm_key)
         if g_debug & 0x100:
             printWithTime("OWM URL = " + URL)
 
         response = requests.get(URL)
+        printWithTime("Tesla-Timer: Timer Hang Debug: OWM queried, analysing results")
         if response.status_code == 200:
             if g_debug & 0x200:
                 printWithTime(json.dumps(response.json(), indent = 4))
@@ -598,7 +630,7 @@ def on_timer():
 
             if g_windows is not None and g_windows > 0:
                 if (g_debug & 3) > 0:
-                    printWithTime("Tesla-Timer: Debug: Windows are opened")
+                    printWithTime("Tesla-Timer: Windows are opened")
             
             if vehicle_status == "awake":
                 if g_debug & 0x800:
@@ -615,8 +647,9 @@ def on_timer():
                         if soc is not None and soc >= 20:
                             if vehicle_status == "awake":
                                 #vehicles[vehicle].sync_wake_up()  # Keep the vehicle awake so cabin overheat protection can do its stuff if needed <- Only works for 12 hours after a drive, not when awaken :-(
-                                printWithTime("Tesla-Timer: Debug: Fan is running: " + str(active_cooling))
-                                printWithTime("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") according to OWM station '" + data['name'] + "' during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C with inside at " + "{:.1f}".format(inside_temp) + "C - The vehicle is awake!")
+                                if (g_debug & 3) > 1:
+                                    printWithTime("Tesla-Timer: Debug: Fan is running: " + str(active_cooling))
+                                    printWithTime("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") according to OWM station '" + data['name'] + "' during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C with inside at " + "{:.1f}".format(inside_temp) + "C - The vehicle is awake!")
                             else:
                                 if (g_debug & 3) > 1:
                                     printWithTime("Tesla-Timer: Debug: Some sun at least with " + data['weather'][0]['description'] + " (" + str(icon) + ") according to OWM station '" + data['name'] + "' during mid-day and outside is warm at " + "{:.1f}".format(g_out_temp) + "C - Vehicle is asleep so can't get its inside temperature")
@@ -642,9 +675,11 @@ def on_timer():
                 if int(icon[0:2]) >= 9 and int(icon[0:2]) <= 11: # But is it raining? 9: Shower rain, 10: Rain, 11: Thunderstorm
                     if g_mqtt_raining == False and g_owm_raining == False: # We'll reset to False once the rain has stopped, so we don't keep pounding the vehicle for the same rain shower
                         g_owm_raining = True # It's raining according to OWM, let's check our windows (and MQTT hasn't seen rain yet)
-                        printWithTime("Tesla-Timer: Calling raining_check_windows")
+                        if (g_debug & 3) > 1:
+                            printWithTime("Tesla-Timer: Debug: Calling raining_check_windows")
                         raining_check_windows(-1.0, data['name'])
-                        printWithTime("Tesla-Timer: Returning from raining_check_windows")
+                        if (g_debug & 3) > 1:
+                            printWithTime("Tesla-Timer: Debug: Returning from raining_check_windows")
                     else:
                         if (g_debug & 3) > 0:
                             printWithTime("Tesla-Timer: Skipping, waiting for the rain to stop")
@@ -661,8 +696,9 @@ def on_timer():
         else:
             if (g_debug & 3) > 1:
                 printWithTime("Tesla-Timer: Debug: OWN returned " + str(response.status_code))
-    else:
+    elif (g_debug & 3) > 1:
         printWithTime("Tesla-Timer: Debug: No OWM token")
+    printWithTime("Tesla-Timer: Timer Hang Debug: Finished OWM stuff")
 
     g_in_timer = 0
 
@@ -681,6 +717,9 @@ sendTo = Config.get('Email', 'to')
 station_latitude = float(Config.get('MQTT', 'latitude'))
 station_longitude = float(Config.get('MQTT', 'longitude'))
 
+g_t_sec = int(Config.get('Timers', 'Timer'))
+g_wd_timer = int(Config.get('Timers', 'WatchDog'))
+g_wd_mqtt_max = int(Config.get('Timers', 'MQTT_Max'))
 g_debug = int(Config.get('Debug', 'Debug_level'))
 print("Tesla: Debug level is " + str(g_debug))
 
@@ -738,7 +777,7 @@ vehicle_status = get_vehicle_status()
 if (vehicle_status == "asleep" or vehicle_status == "waiting_for_sleep"):
     if wake_at_start == 1:
         print("Waking up vehicle " + vin)
-        response = tessie("wake", "")
+        response = tessie("wake", "", g_wd_timer)
     else:
         print("Vehicle " + vin + " is asleep and we're not requesting it to be waken up")
 elif vehicle_status == "awake":
@@ -749,16 +788,13 @@ else:
 print("Running first instance of the timer thread")
 on_timer()
 
-t_sec = int(Config.get('Timers', 'Timer'))
-print("Tesla: Starting timer thread with an interval of " + str(t_sec) + " seconds")
-T = RepeatTimer(t_sec, on_timer)
+print("Tesla: Starting timer thread with an interval of " + str(g_t_sec) + " seconds")
+T = RepeatTimer(g_t_sec, on_timer)
 T.start()
 
 print("Tesla: Waiting 30 seconds before starting watchdog thread")
 time.sleep(30)
 
-g_wd_timer = int(Config.get('Timers', 'WatchDog'))
-g_wd_mqtt_max = int(Config.get('Timers', 'MQTT_Max'))
 print("Tesla: Starting watchdog thread with an interval of " + str(g_wd_timer) + " seconds and max time between MQTT event is " + str(g_wd_mqtt_max))
 W = RepeatTimer(g_wd_timer, on_watchdog)
 W.start()
