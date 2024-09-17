@@ -122,6 +122,8 @@ def on_mqtt_message(client, userdata, msg):
 
 def tessie(command, extra, timeout):
     global g_t_sec
+    global g_timeout_count
+    global g_kill_prog
     
     url = "https://api.tessie.com/" + vin + "/" + command + extra
     headers = {
@@ -136,26 +138,32 @@ def tessie(command, extra, timeout):
     try:
         response = requests.get(url, headers=headers, timeout=timeout)
     except Exception as error:
-        # if g_already_sent_email_after_error == False:
-            # g_already_sent_email_after_error = True
+        # if we get three errors in a row, send an email
+        g_timeout_count += 1
+        if g_timeout_count == 3:
+            g_timeout_count = 0
 
-            # emailBody = "Tessie: command failed with exception: " + str(error)
-            # emailSubject = "Tessie: command failed with exception: " + type(error).__name__
+            emailBody = "Tesla-Tessie: command failed with exception: " + str(error)
+            emailSubject = "Tesla-Tessie: command failed with exception: " + type(error).__name__
 
-            # try:
-                # sender = Emailer()
-                # sender.sendmail(sendTo, emailSubject, emailBody)
-            # except Exception as error:
-                # if (g_debug & 3) > 0:
-                    # printWithTime("Tesla-Tessie: Unable to send email because of exception: " + type(error).__name__ + ")")
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                # Something is really wrong if this fails too so quit
+                if (g_debug & 3) > 0:
+                    printWithTime("Tesla-Tessie: Unable to send email because of exception: " + type(error).__name__ + ")")
+                g_kill_prog = True
+                quit(1) # Quit so systemctl respawn the process because we were asked to quit. Not elegant but does the work
 
         if (g_debug & 3) > 0:
             printWithTime("Tesla-Tessie: Command failed with exception: " + str(error))
-            # printWithTime(emailSubject)
-            # printWithTime("Te: " + emailBody)
+
         response = requests.Response() # Build a new Response dict
         response.status_code = -300        
-
+    else:
+        g_timeout_count = 0
+    
     if g_debug & 0x40:
         printWithTime(response.status_code)
         printWithTime(response.json())
@@ -185,7 +193,7 @@ def raining_check_windows(rain, owm_station):
 
     # Read data that I need from the vehicle
     response = tessie("state", "?use_cache=true", g_t_sec)
-    if response.status_code != 200:
+    if response.status_code != 200 and response.status_code != -300:
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
 
@@ -442,13 +450,14 @@ def on_timer():
         quit(1) # Quit so systemctl respawn the process because we were asked to quit. Not elegant but does the work
     
     # Get the state of the vehicle first
+    printWithTime("Tesla-Timer: Timer Hang Debug: Querying Tessie Status")
     vehicle_status = get_vehicle_status()
 
     # Read data that I need from the vehicle
-    printWithTime("Tesla-Timer: Timer Hang Debug: Querying Tessie")
+    printWithTime("Tesla-Timer: Timer Hang Debug: Querying Tessie State")
     
     response = tessie("state", "?use_cache=true", g_t_sec)
-    if response.status_code != 200:
+    if response.status_code != 200 and response.status_code != -300:
         if g_already_sent_email_after_error == False:
             g_already_sent_email_after_error = True
 
@@ -526,10 +535,16 @@ def on_timer():
     sun = Sun(latitude, longitude)
     today_sr = sun.get_sunrise_time()
     today_ss = sun.get_sunset_time()
-    if today_sr > today_ss:
-        today_ss = today_ss + timedelta(days=1) # Bug in the routine, day isn't update when crossing over midnight in UTC timezone
+    if now.day == today_sr.day:
+        tomorrow_sr = sun.get_sunrise_time() + timedelta(days=1)
+    else:
+        tomorrow_sr = sun.get_sunrise_time()
+    
     tz_toronto = pytz.timezone('America/Toronto')
     now_tz = tz_toronto.localize(now)
+    if today_sr > today_ss:
+        today_ss = today_ss + timedelta(days=1) # Bug in the routine, day isn't update when crossing over midnight in UTC timezone
+
     if g_debug & 0x4000:
         printWithTime("Tesla-Timer: Debug: today_sr: " + str(today_sr))
         printWithTime("Tesla-Timer: Debug: today_ss: " + str(today_ss))
@@ -543,7 +558,7 @@ def on_timer():
         printWithTime("Tesla-Timer: Timer Hang Debug: Doing night stuff")
 
         if (g_debug & 3) > 1:
-            printWithTime("Tesla-Timer: Debug: Night")
+            printWithTime("Tesla-Timer: Debug: It's night with " + str(tomorrow_sr - now_tz) + " until sunrize")
         if g_night == False or g_retry == 10:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
             if g_retry == 10: # If we got here because we timed out, reset it back to 0
                 g_retry = 0
@@ -596,7 +611,7 @@ def on_timer():
         printWithTime("Tesla-Timer: Timer Hang Debug: Doing day stuff")
         g_night = False
         if (g_debug & 3) > 1:
-            printWithTime("Tesla-Timer: Debug: Still daytime with diff of " + str(today_ss - now_tz))
+            printWithTime("Tesla-Timer: Debug: It's daytime with " + str(today_ss - now_tz) + " until sunset")
 
     # Check if it's during the hottest part of the day, it's warm outside and the sun might be out - All conditions to have a warm inside. If set, keep the vehicle awake so cabin protection can do its stuff
     # Also check if raining according to OWM and close the windows if they are opened (location based on car's position), no matter the time of day
@@ -740,6 +755,7 @@ g_out_temp = None
 g_already_sent_email_after_error = False
 g_retry = 0
 g_in_timer = 0
+g_timeout_count = 0
 
 # These are our Tesla data we need to keep while we're running
 g_windows = None
