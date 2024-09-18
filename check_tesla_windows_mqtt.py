@@ -193,24 +193,25 @@ def raining_check_windows(rain, owm_station):
 
     # Read data that I need from the vehicle
     response = tessie("state", "?use_cache=true", g_t_sec)
-    if response.status_code != 200 and response.status_code != -300:
-        if g_already_sent_email_after_error == False:
-            g_already_sent_email_after_error = True
+    if response.status_code != 200:
+        if response.status_code != -300:
+            if g_already_sent_email_after_error == False:
+                g_already_sent_email_after_error = True
 
-            emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
-            emailSubject = "Tesla-CheckRain: " + emailBody
+                emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
+                emailSubject = "Tesla-CheckRain: " + emailBody
 
-            try:
-                sender = Emailer()
-                sender.sendmail(sendTo, emailSubject, emailBody)
-            except Exception as error:
-                if (g_debug & 3) > 0:
-                    if rain < 0.0:
-                        printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
-                    else:
-                        printWithTime("Tesla-MQTT: Unable to send email because of exception: " + type(error).__name__ + ")")
+                try:
+                    sender = Emailer()
+                    sender.sendmail(sendTo, emailSubject, emailBody)
+                except Exception as error:
+                    if (g_debug & 3) > 0:
+                        if rain < 0.0:
+                            printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                        else:
+                            printWithTime("Tesla-MQTT: Unable to send email because of exception: " + type(error).__name__ + ")")
 
-            printWithTime("Tesla-CheckRain: " + emailBody)
+                printWithTime("Tesla-CheckRain: " + emailBody)
 
         return;
     
@@ -453,26 +454,27 @@ def on_timer():
     printWithTime("Tesla-Timer: Timer Hang Debug: Querying Tessie Status")
     vehicle_status = get_vehicle_status()
 
-    # Read data that I need from the vehicle
     printWithTime("Tesla-Timer: Timer Hang Debug: Querying Tessie State")
     
+    # Read data that I need from the vehicle
     response = tessie("state", "?use_cache=true", g_t_sec)
-    if response.status_code != 200 and response.status_code != -300:
-        if g_already_sent_email_after_error == False:
-            g_already_sent_email_after_error = True
+    if response.status_code != 200:
+        if response.status_code != -300:
+            if g_already_sent_email_after_error == False:
+                g_already_sent_email_after_error = True
 
-            emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
-            emailSubject = "Tesla-Timer: " + emailBody
+                emailBody = "Error #" + str(response.status_code) + " getting vehicle data for VIN " + vin
+                emailSubject = "Tesla-Timer: " + emailBody
 
-            try:
-                sender = Emailer()
-                sender.sendmail(sendTo, emailSubject, emailBody)
-            except Exception as error:
-                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                try:
+                    sender = Emailer()
+                    sender.sendmail(sendTo, emailSubject, emailBody)
+                except Exception as error:
+                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
 
-            if (g_debug & 3) > 0:
-                printWithTime(emailSubject)
-                printWithTime("Tesla-Timer: " + emailBody)
+                if (g_debug & 3) > 0:
+                    printWithTime(emailSubject)
+                    printWithTime("Tesla-Timer: " + emailBody)
 
         g_in_timer = 0
         return;
@@ -535,16 +537,14 @@ def on_timer():
     sun = Sun(latitude, longitude)
     today_sr = sun.get_sunrise_time()
     today_ss = sun.get_sunset_time()
-    if now.day == today_sr.day:
-        tomorrow_sr = sun.get_sunrise_time() + timedelta(days=1)
-    else:
-        tomorrow_sr = sun.get_sunrise_time()
-    
     tz_toronto = pytz.timezone('America/Toronto')
     now_tz = tz_toronto.localize(now)
     if today_sr > today_ss:
         today_ss = today_ss + timedelta(days=1) # Bug in the routine, day isn't update when crossing over midnight in UTC timezone
-
+        tomorrow_sr = sun.get_sunrise_time()
+    else:
+        tomorrow_sr = sun.get_sunrise_time() + timedelta(days=1)
+    
     if g_debug & 0x4000:
         printWithTime("Tesla-Timer: Debug: today_sr: " + str(today_sr))
         printWithTime("Tesla-Timer: Debug: today_ss: " + str(today_ss))
