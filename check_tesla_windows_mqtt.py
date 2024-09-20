@@ -541,9 +541,6 @@ def on_timer():
     now_tz = tz_toronto.localize(now)
     if today_sr > today_ss:
         today_ss = today_ss + timedelta(days=1) # Bug in the routine, day isn't update when crossing over midnight in UTC timezone
-        tomorrow_sr = sun.get_sunrise_time()
-    else:
-        tomorrow_sr = sun.get_sunrise_time() + timedelta(days=1)
     
     if g_debug & 0x4000:
         printWithTime("Tesla-Timer: Debug: today_sr: " + str(today_sr))
@@ -556,9 +553,13 @@ def on_timer():
 
     if today_sr > now_tz or now_tz > today_ss:
         printWithTime("Tesla-Timer: Timer Hang Debug: Doing night stuff")
-
+        if now_tz > today_sr:
+            tomorrow_sr = sun.get_sunrise_time() + timedelta(days=1)
+        else:
+            tomorrow_sr = sun.get_sunrise_time()
+        
         if (g_debug & 3) > 1:
-            printWithTime("Tesla-Timer: Debug: It's night with " + str(tomorrow_sr - now_tz) + " until sunrize")
+            printWithTime("Tesla-Timer: Debug: It's night with " + str(tomorrow_sr - now_tz) + " until sunrise")
         if g_night == False or g_retry == 10:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
             if g_retry == 10: # If we got here because we timed out, reset it back to 0
                 g_retry = 0
