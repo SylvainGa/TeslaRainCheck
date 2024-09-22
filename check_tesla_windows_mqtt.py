@@ -593,19 +593,21 @@ def on_timer():
                     emailBody = "Unable to close windows at sunset. Status code was " + str(status_code) + " Check vehicle!"
 
                     emailSubject = "Tesla-Timer: " + emailBody
-                
-                try:
-                    sender = Emailer()
-                    sender.sendmail(sendTo, emailSubject, emailBody)
-                except Exception as error:
-                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
-
-                printWithTime(emailSubject)
-                
             else:
                 g_retry = 0
-                if (g_debug & 3) > 0:
-                    printWithTime("Tesla-Timer: Our windows are closed")
+                now = datetime.now()
+                current_time = now.strftime("%H:%M:%S")
+                emailBody = "Windows were closed at sunset (" + current_time + ")"
+                emailSubject = "Tesla-Timer: " + emailBody
+
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+
+            printWithTime(emailSubject)
+
         elif g_retry != 0: # If we got an error when trying to close the windows, wait 10 iteration cycles and try again
             g_retry = g_retry + 1
     else:
