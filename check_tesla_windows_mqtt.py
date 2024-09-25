@@ -561,6 +561,7 @@ def on_timer():
         if (g_debug & 3) > 1:
             printWithTime("Tesla-Timer: Debug: It's night with " + str(tomorrow_sr - now_tz) + " until sunrise")
         if g_night == False or g_retry == 10:  # First time going in since the sun has set, check if we're parked with the windows down and if so, close them
+            sendEmail = True
             if g_retry == 10: # If we got here because we timed out, reset it back to 0
                 g_retry = 0
             g_night = True
@@ -600,11 +601,15 @@ def on_timer():
                 emailBody = "Windows were closed at sunset (" + current_time + ")"
                 emailSubject = "Tesla-Timer: " + emailBody
 
-            try:
-                sender = Emailer()
-                sender.sendmail(sendTo, emailSubject, emailBody)
-            except Exception as error:
-                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                if sendDailyEmail == False:
+                    sendEmail = False
+
+            if sendEmail:
+                try:
+                    sender = Emailer()
+                    sender.sendmail(sendTo, emailSubject, emailBody)
+                except Exception as error:
+                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
 
             printWithTime(emailSubject)
 
@@ -732,6 +737,7 @@ vin = Config.get('Tesla', 'vin')
 tessie_token = Config.get('Tesla', 'tessie_token')
 wake_at_start = int(Config.get('Tesla', 'wake_at_start'))
 sendTo = Config.get('Email', 'to')
+sendDailyEmail = Config.getboolean('Email', 'daily_status')
 station_latitude = float(Config.get('MQTT', 'latitude'))
 station_longitude = float(Config.get('MQTT', 'longitude'))
 
