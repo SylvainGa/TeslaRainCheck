@@ -152,7 +152,7 @@ def tessie(command, extra, timeout):
             except Exception as error:
                 # Something is really wrong if this fails too so quit
                 if (g_debug & 3) > 0:
-                    printWithTime("Tesla-Tessie: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    printWithTime("Tesla-Tessie: Unable to send email because of exception: " + type(error).__name__)
                 g_kill_prog = True
                 quit(1) # Quit so systemctl respawn the process because we were asked to quit. Not elegant but does the work
 
@@ -207,9 +207,9 @@ def raining_check_windows(rain, owm_station):
                 except Exception as error:
                     if (g_debug & 3) > 0:
                         if rain < 0.0:
-                            printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                            printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__)
                         else:
-                            printWithTime("Tesla-MQTT: Unable to send email because of exception: " + type(error).__name__ + ")")
+                            printWithTime("Tesla-MQTT: Unable to send email because of exception: " + type(error).__name__)
 
                 printWithTime("Tesla-CheckRain: " + emailBody)
 
@@ -232,7 +232,7 @@ def raining_check_windows(rain, owm_station):
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
                 if (g_debug & 3) > 0:
-                    printWithTime("Tesla-CheckRain: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    printWithTime("Tesla-CheckRain: Unable to send email because of exception: " + type(error).__name__)
 
             printWithTime("Tesla-CheckRain: " + emailBody)
 
@@ -306,7 +306,7 @@ def raining_check_windows(rain, owm_station):
             sender.sendmail(sendTo, emailSubject, emailBody)
         except Exception as error:
             if (g_debug & 3) > 0:
-                printWithTime("Tesla-CheckRain: Unable to send email because of exception: " + type(error).__name__ + ")")
+                printWithTime("Tesla-CheckRain: Unable to send email because of exception: " + type(error).__name__)
     
         printWithTime(emailSubject)
         printWithTime("Tesla-CheckRain: " + emailBody)
@@ -334,8 +334,8 @@ class RepeatTimer(Timer):
             if g_kill_prog == True:
                 printWithTime("Tesla-RepeatTimer: Asked to quit")
                 quit(1) # Quit so systemctl respawn the process because we were asked to quit. Not elegant but does the work
-
-            self.function(*self.args, **self.kwargs)
+            else:
+                self.function(*self.args, **self.kwargs)
 
 def on_watchdog():
     global g_skip_mqtt
@@ -365,9 +365,11 @@ def on_watchdog():
                     sender.sendmail(sendTo, emailSubject, emailBody)
                 except Exception as error:
                     if (g_debug & 3) > 0:
-                        printWithTime("Tesla-WD: Unable to send email because of exception: " + type(error).__name__ + ")")
+                        printWithTime("Tesla-WD: Unable to send email because of exception: " + type(error).__name__)
 
                 printWithTime(emailSubject)
+
+                g_kill_prog = True
 
                 quit(1) # Quit so systemctl respawn the process because 60 seconds without data from the station isn't normal. Not elegant but does the work
 
@@ -384,7 +386,7 @@ def on_watchdog():
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
                 if (g_debug & 3) > 0:
-                    printWithTime("Tesla-WD: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    printWithTime("Tesla-WD: Unable to send email because of exception: " + type(error).__name__)
 
             printWithTime(emailSubject)
             printWithTime("Tesla-WD: " + emailBody)
@@ -438,7 +440,7 @@ def on_timer():
                 sender = Emailer()
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
-                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__)
 
             printWithTime("Tesla-Timer: " + emailBody)
 
@@ -470,7 +472,7 @@ def on_timer():
                     sender = Emailer()
                     sender.sendmail(sendTo, emailSubject, emailBody)
                 except Exception as error:
-                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__)
 
                 if (g_debug & 3) > 0:
                     printWithTime(emailSubject)
@@ -497,7 +499,7 @@ def on_timer():
                 sender = Emailer()
                 sender.sendmail(sendTo, emailSubject, emailBody)
             except Exception as error:
-                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__)
 
             printWithTime("Tesla-Timer: " + emailBody)
 
@@ -609,7 +611,7 @@ def on_timer():
                     sender = Emailer()
                     sender.sendmail(sendTo, emailSubject, emailBody)
                 except Exception as error:
-                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__ + ")")
+                    printWithTime("Tesla-Timer: Unable to send email because of exception: " + type(error).__name__)
 
             printWithTime(emailSubject)
 
@@ -789,7 +791,23 @@ if Config.has_option('MQTT', 'hostname'):
     mqtt_client.username_pw_set(username = Config.get('MQTT', 'username'), password = Config.get('MQTT', 'password'))
 
     print("Tesla: Connecting to MQTT...")
-    mqtt_client.connect(Config.get('MQTT', 'hostname'), int(Config.get('MQTT', 'port')), 60)
+    try:
+        mqtt_client.connect(Config.get('MQTT', 'hostname'), int(Config.get('MQTT', 'port')), 60)
+    except Exception as error:
+        emailBody = "Unable to connect to MQTT. Error " + type(error).__name__
+        emailSubject = "Tesla: " + emailBody
+
+        if g_already_sent_email_after_error == False:
+            g_already_sent_email_after_error = True
+
+            try:
+                sender = Emailer()
+                sender.sendmail(sendTo, emailSubject, emailBody)
+            except Exception as error:
+                printWithTime("Tesla: Unable to send email because of exception: " + type(error).__name__)
+
+        printWithTime("Tesla: " + emailBody)
+    
 elif owm_key is not None:
     g_skip_mqtt = True
     print("Tesla: Skipping MQTT, will only use OWM")
